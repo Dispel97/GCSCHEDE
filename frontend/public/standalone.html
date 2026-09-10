@@ -168,6 +168,24 @@ var __Html5QrcodeLibrary__;(()=>{var t={449:function(t,e,r){!function(t){"use st
     <div class="row" style="margin-top:10px;" id="recipientsList"></div>
   </section>
 
+  <!-- Stats panel -->
+  <section class="card" id="statsPanel" style="padding: 14px 16px; display:none;">
+    <div class="row" style="justify-content: space-between; gap: 8px; flex-wrap: wrap;">
+      <div>
+        <div style="font-size:11px; font-weight:700; color:var(--slate-500); text-transform:uppercase; letter-spacing:0.05em;">Statistiche</div>
+        <h2 style="margin: 2px 0 0; font-size: 18px; font-family:'Outfit',sans-serif; font-weight:800;">Il tuo mese</h2>
+      </div>
+      <div class="row" style="gap:6px; flex-wrap: wrap;">
+        <button class="btn btn-light" id="btnExportOlo" style="padding: 6px 12px; font-size: 11px;">📄 Export OLO</button>
+        <button class="btn btn-dark" id="btnExportAll" style="padding: 6px 12px; font-size: 11px;">📄 Export JSON</button>
+        <button class="btn btn-danger" id="btnResetMonth" style="padding: 6px 12px; font-size: 11px;">↻ Reset mese</button>
+      </div>
+    </div>
+    <div id="statsGrid" style="display:grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 12px;"></div>
+    <div id="statsDays" style="margin-top: 12px;"></div>
+    <div style="margin-top: 10px; font-size: 10px; color: var(--slate-400);">Target: 4 note/giorno · verde = raggiunto</div>
+  </section>
+
   <section>
     <div class="row" style="justify-content: space-between; margin-bottom: 10px;">
       <div class="row" style="gap: 8px;">
@@ -397,6 +415,81 @@ function composeNote(n) {
   return `WR: ${n.wr || ""}\n${(n.cliente || "").toLowerCase()}\n${n.olo || ""}\n${tech}\nCPE: ${n.cpe || ""}\n(ONT/SFP): ${n.ont_sfp || ""}`;
 }
 
+// -------- Stats helpers --------
+const DAILY_TARGET = 4;
+function localDateKey(iso) {
+  try {
+    const d = new Date(iso);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  } catch { return "unknown"; }
+}
+function humanDate(k) {
+  const [y, m, d] = k.split("-");
+  const dt = new Date(Number(y), Number(m) - 1, Number(d));
+  const days = ["Dom", "Lun", "Mar", "Mer", "Gio", "Ven", "Sab"];
+  return `${days[dt.getDay()]} ${d}/${m}`;
+}
+function downloadFile(name, content, mime) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function renderStats() {
+  const panel = document.getElementById("statsPanel");
+  if (!notes.length) { panel.style.display = "none"; return; }
+  panel.style.display = "block";
+  const byDay = notes.reduce((acc, n) => { const k = localDateKey(n.created_at || new Date().toISOString()); (acc[k] = acc[k] || []).push(n); return acc; }, {});
+  const dayKeys = Object.keys(byDay).sort();
+  const daysCount = dayKeys.length;
+  const total = notes.length;
+  const avg = daysCount ? total / daysCount : 0;
+  const now = new Date();
+  const thisMonthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const thisMonth = notes.filter(n => (n.created_at || "").startsWith("") && localDateKey(n.created_at).startsWith(thisMonthPrefix)).length;
+  const thisMonthDays = dayKeys.filter(k => k.startsWith(thisMonthPrefix)).length;
+  const monthAvg = thisMonthDays ? thisMonth / thisMonthDays : 0;
+  const todayKey = localDateKey(now.toISOString());
+  const todayCount = (byDay[todayKey] || []).length;
+  const targetOk = v => v >= DAILY_TARGET;
+  const grid = document.getElementById("statsGrid");
+  grid.innerHTML = `
+    <div style="border:1px solid var(--slate-100); background: var(--slate-50); border-radius: 12px; padding: 10px;">
+      <div style="font-size:11px; color: var(--slate-500); font-weight: 600;">Totale note</div>
+      <div style="font-size:22px; font-family:'Outfit',sans-serif; font-weight:800; color: var(--slate-900); margin-top:2px;">${total}</div>
+    </div>
+    <div style="border:1px solid var(--slate-100); background: var(--slate-50); border-radius: 12px; padding: 10px;">
+      <div style="font-size:11px; color: var(--slate-500); font-weight: 600;">Oggi</div>
+      <div style="font-size:22px; font-family:'Outfit',sans-serif; font-weight:800; color: ${targetOk(todayCount) ? "#059669" : "var(--slate-900)"}; margin-top:2px;">${todayCount}</div>
+      <div style="font-size:10px; color: var(--slate-500);">target ${DAILY_TARGET}/g</div>
+    </div>
+    <div style="border:1px solid var(--slate-100); background: var(--slate-50); border-radius: 12px; padding: 10px;">
+      <div style="font-size:11px; color: var(--slate-500); font-weight: 600;">Media giornaliera</div>
+      <div style="font-size:22px; font-family:'Outfit',sans-serif; font-weight:800; color: ${targetOk(avg) ? "#059669" : "#DC2626"}; margin-top:2px;">${avg.toFixed(1)}</div>
+      <div style="font-size:10px; color: var(--slate-500);">su ${daysCount} giorni</div>
+    </div>
+    <div style="border:1px solid var(--slate-100); background: var(--slate-50); border-radius: 12px; padding: 10px;">
+      <div style="font-size:11px; color: var(--slate-500); font-weight: 600;">Questo mese</div>
+      <div style="font-size:22px; font-family:'Outfit',sans-serif; font-weight:800; color: var(--slate-900); margin-top:2px;">${thisMonth}</div>
+      <div style="font-size:10px; color: var(--slate-500);">media ${monthAvg.toFixed(1)}/g</div>
+    </div>`;
+  const last7 = dayKeys.slice(-7).reverse();
+  const maxCount = Math.max(1, ...last7.map(k => byDay[k].length));
+  const days = document.getElementById("statsDays");
+  days.innerHTML = `<div style="font-size:11px; font-weight: 600; color: var(--slate-500); margin-bottom: 6px;">Ultimi giorni</div>` +
+    last7.map(k => {
+      const c = byDay[k].length; const pct = Math.max(6, (c / maxCount) * 100); const ok = targetOk(c);
+      return `<div style="display:flex; align-items:center; gap:8px; font-size:12px; margin-bottom:6px;">
+        <div style="width:74px; font-family:'JetBrains Mono',monospace; color:var(--slate-700);">${humanDate(k)}</div>
+        <div style="flex:1; height:22px; background:var(--slate-100); border-radius:6px; overflow:hidden;">
+          <div style="height:100%; width:${pct}%; background:${ok ? "#10B981" : "#E5007D"};"></div>
+        </div>
+        <div style="width:24px; text-align:right; font-weight:700; color:${ok ? "#059669" : "var(--slate-700)"};">${c}</div>
+      </div>`;
+    }).join("");
+}
+
 // -------- Render --------
 function render() {
   const list = document.getElementById("notesList");
@@ -412,7 +505,29 @@ function render() {
   document.getElementById("selectAllLabel").textContent = allSel ? "Deseleziona tutto" : "Seleziona tutto";
 
   list.innerHTML = "";
-  for (const n of filtered) list.appendChild(renderCard(n));
+  // Raggruppa per giorno
+  const byDay = filtered.reduce((acc, n) => { const k = localDateKey(n.created_at || new Date().toISOString()); (acc[k] = acc[k] || []).push(n); return acc; }, {});
+  const keys = Object.keys(byDay).sort().reverse();
+  for (const k of keys) {
+    const group = document.createElement("div"); group.style.marginBottom = "18px";
+    const header = document.createElement("div");
+    header.style.cssText = "display:flex; align-items:center; gap:8px; margin-bottom: 8px;";
+    const badge = document.createElement("div");
+    badge.style.cssText = "font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:600; color:var(--slate-700); background:var(--slate-100); border:1px solid var(--slate-200); border-radius:999px; padding: 4px 12px;";
+    badge.textContent = humanDate(k);
+    const count = document.createElement("div");
+    count.style.cssText = `font-size:11px; font-weight:600; color: ${byDay[k].length >= DAILY_TARGET ? "#059669" : "var(--slate-500)"};`;
+    count.textContent = `${byDay[k].length} note`;
+    const sep = document.createElement("div"); sep.style.cssText = "flex:1; height:1px; background:var(--slate-100);";
+    header.append(badge, count, sep);
+    group.appendChild(header);
+    const cards = document.createElement("div"); cards.style.cssText = "display:grid; gap:10px;";
+    for (const n of byDay[k]) cards.appendChild(renderCard(n));
+    group.appendChild(cards);
+    list.appendChild(group);
+  }
+
+  renderStats();
 }
 
 function renderCard(n) {
@@ -561,11 +676,13 @@ function mkBtn(text, cls, onClick) {
 }
 function escapeHtml(s) { return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c])); }
 
-// -------- Gmail send (Web Share on mobile + Gmail Web fallback) --------
+// -------- Gmail send (Web Share on mobile + mailto: fallback for Gmail app + Gmail Web on desktop) --------
 async function sendGmail(n) {
   const noteText = n.note_text_manual ? (n.note_text || composeNote(n)) : composeNote(n);
   const subject = `WR: ${n.wr}`;
   const to = RECIPIENTS.join(",");
+  const ua = navigator.userAgent || "";
+  const isMobile = /Android|iPhone|iPad|iPod/i.test(ua);
   try { await navigator.clipboard.writeText(RECIPIENTS.join(", ")); } catch (_) {}
 
   // Raccogli i file
@@ -575,24 +692,30 @@ async function sendGmail(n) {
     if (rec && rec.blob) files.push(new File([rec.blob], rec.filename || `foto_${p.id}.jpg`, { type: rec.blob.type || p.content_type || "image/jpeg" }));
   }
 
-  if (files.length && navigator.canShare) {
+  // Mobile con file: Web Share
+  if (isMobile && files.length && navigator.canShare) {
     const shareData = { title: subject, text: noteText, files };
     try {
       if (navigator.canShare(shareData)) {
         await navigator.share(shareData);
-        toast("Condivisione aperta — scegli Gmail. Destinatari negli appunti: incollali nel campo A:", "success");
+        toast("Condivisione aperta — scegli Gmail. Destinatari negli appunti", "success");
         return;
       }
     } catch (err) {
       if (err && err.name === "AbortError") return;
     }
   }
-  // Fallback: Gmail Web/App con destinatari, oggetto, corpo
+  // Mobile senza file o senza Web Share: mailto: apre l'app Gmail nativa
+  if (isMobile) {
+    window.location.href = `mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(noteText)}`;
+    toast("Apertura Gmail…" + (files.length ? " Aggiungi manualmente le foto dopo." : ""), "info");
+    return;
+  }
+  // Desktop: Gmail Web
   const url = `https://mail.google.com/mail/?view=cm&fs=1&tf=1&to=${encodeURIComponent(to)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(noteText)}`;
   const a = document.createElement("a"); a.href = url; a.target = "_blank"; a.rel = "noopener noreferrer";
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  if (files.length) toast("Gmail aperto. Il browser non supporta l'invio automatico degli allegati — aggiungili manualmente.", "info");
-  else toast("Gmail aperto con destinatari e nota. Aggiungi manualmente le foto.", "info");
+  toast("Gmail aperto — allega manualmente le foto", "info");
 }
 
 // -------- PDF handling --------
@@ -654,6 +777,29 @@ document.getElementById("bulkDeleteBtn").addEventListener("click", async () => {
 // Recipients
 const rl = document.getElementById("recipientsList");
 for (const r of RECIPIENTS) { const s = document.createElement("span"); s.className = "recipient-tag"; s.textContent = r; rl.appendChild(s); }
+
+// -------- Export / Reset --------
+document.getElementById("btnExportAll").addEventListener("click", () => {
+  if (!notes.length) return;
+  const payload = { exported_at: new Date().toISOString(), total: notes.length, notes };
+  const today = localDateKey(new Date().toISOString());
+  downloadFile(`note-openfiber-${today}.json`, JSON.stringify(payload, null, 2), "application/json");
+  toast("Esportazione JSON completata", "success");
+});
+document.getElementById("btnExportOlo").addEventListener("click", () => {
+  if (!notes.length) return;
+  const lines = notes.map(n => n.olo).filter(Boolean);
+  const today = localDateKey(new Date().toISOString());
+  downloadFile(`codici-olo-${today}.txt`, lines.join("\n"), "text/plain;charset=utf-8");
+  toast("Esportazione OLO completata", "success");
+});
+document.getElementById("btnResetMonth").addEventListener("click", async () => {
+  if (!notes.length) return;
+  if (!confirm(`ATTENZIONE: verranno eliminate tutte le ${notes.length} note (foto incluse). Assicurati di aver esportato prima.\n\nProcedere con il reset?`)) return;
+  for (const n of notes) for (const p of n.photos || []) await deletePhoto(p.id);
+  notes = []; selected.clear(); saveNotes(notes); render();
+  toast("Reset completato", "success");
+});
 
 // -------- Barcode/QR Scanner --------
 let __qrInstance = null;

@@ -485,12 +485,14 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect, onOp
   const sendGmail = async () => {
     const subject = `WR: ${note.wr}`;
     const to = RECIPIENTS.join(",");
+    const ua = navigator.userAgent || "";
+    const isMobile = /Android|iPhone|iPad|iPod/i.test(ua);
     setSending(true);
     try {
-      // Sempre copia i destinatari negli appunti così l'utente può incollarli nel campo "A:"
+      // Sempre copia i destinatari negli appunti
       try { await navigator.clipboard.writeText(RECIPIENTS.join(", ")); } catch (_) {}
 
-      // Raccogli i file (PDF + foto) — sempre, così se ci sono file usiamo Web Share
+      // Raccogli i file (PDF + foto)
       const files = [];
       try {
         if (note.pdf_storage_path) {
@@ -503,27 +505,33 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect, onOp
         }
       } catch (fe) { console.warn("fetch attachments failed", fe); }
 
-      // Tentativo Web Share con file — su mobile apre lo share sheet, l'utente sceglie Gmail e i file sono già allegati
-      if (files.length && navigator.canShare) {
+      // Su mobile con file: Web Share (share sheet → l'utente sceglie l'app Gmail con foto già allegate)
+      if (isMobile && files.length && navigator.canShare) {
         const shareData = { title: subject, text: noteText, files };
         try {
           if (navigator.canShare(shareData)) {
             await navigator.share(shareData);
-            toast.success("Condivisione aperta — scegli Gmail. I destinatari sono negli appunti: incollali nel campo A:");
+            toast.success("Condivisione aperta — scegli Gmail. Destinatari negli appunti: incollali nel campo A:");
             setSending(false); return;
           }
         } catch (err) {
           if (err && err.name === "AbortError") { setSending(false); return; }
-          console.warn("Web Share failed, using Gmail Web fallback", err);
+          console.warn("Web Share failed", err);
         }
       }
 
-      // Fallback: apri Gmail Web/App compose con destinatari, oggetto, corpo. Foto da allegare manualmente.
+      // Mobile senza file (o Web Share non disponibile): mailto: apre l'app Gmail nativa con destinatari, oggetto, corpo
+      if (isMobile) {
+        window.location.href = `mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(noteText)}`;
+        toast.message("Apertura Gmail…" + (files.length ? " Aggiungi manualmente le foto dopo." : ""));
+        setSending(false); return;
+      }
+
+      // Desktop: Gmail Web
       const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&tf=1&to=${encodeURIComponent(to)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(noteText)}`;
       const a = document.createElement("a"); a.href = gmailUrl; a.target = "_blank"; a.rel = "noopener noreferrer";
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      if (files.length) toast.message("Gmail aperto. Il tuo browser non supporta l'invio automatico degli allegati — aggiungili manualmente.");
-      else toast.message("Gmail aperto con destinatari e nota. Aggiungi manualmente PDF e foto.");
+      toast.message("Gmail aperto — allega manualmente PDF e foto");
     } finally { setSending(false); }
   };
 
@@ -663,6 +671,130 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect, onOp
   );
 }
 
+// ---------- Stats Panel ----------
+const DAILY_TARGET = 4;
+
+function localDateKey(iso) {
+  try {
+    const d = new Date(iso);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  } catch { return "unknown"; }
+}
+function humanDate(key) {
+  const [y, m, d] = key.split("-");
+  const dt = new Date(Number(y), Number(m) - 1, Number(d));
+  const days = ["Dom", "Lun", "Mar", "Mer", "Gio", "Ven", "Sab"];
+  return `${days[dt.getDay()]} ${d}/${m}`;
+}
+function downloadFile(name, content, mime) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function StatsPanel({ notes, onReset }) {
+  const byDay = notes.reduce((acc, n) => {
+    const k = localDateKey(n.created_at);
+    (acc[k] = acc[k] || []).push(n);
+    return acc;
+  }, {});
+  const dayKeys = Object.keys(byDay).sort();
+  const daysCount = dayKeys.length;
+  const total = notes.length;
+  const avg = daysCount > 0 ? total / daysCount : 0;
+  const now = new Date();
+  const thisMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const thisMonth = notes.filter((n) => localDateKey(n.created_at).startsWith(thisMonthKey)).length;
+  const thisMonthDays = dayKeys.filter((k) => k.startsWith(thisMonthKey)).length;
+  const monthAvg = thisMonthDays > 0 ? thisMonth / thisMonthDays : 0;
+  const todayKey = localDateKey(now.toISOString());
+  const todayCount = (byDay[todayKey] || []).length;
+  const last7 = dayKeys.slice(-7).reverse();
+  const maxCount = Math.max(1, ...last7.map((k) => byDay[k].length));
+
+  const targetOK = (v) => v >= DAILY_TARGET;
+
+  const exportAll = () => {
+    const payload = { exported_at: new Date().toISOString(), total, notes };
+    downloadFile(`note-openfiber-${todayKey}.json`, JSON.stringify(payload, null, 2), "application/json");
+    toast.success("Esportazione completa avviata");
+  };
+  const exportOlo = () => {
+    const lines = notes.map((n) => n.olo).filter(Boolean);
+    downloadFile(`codici-olo-${todayKey}.txt`, lines.join("\n"), "text/plain;charset=utf-8");
+    toast.success("Esportazione OLO avviata");
+  };
+
+  return (
+    <section className="bg-white border border-slate-200 rounded-2xl card-shadow p-4 sm:p-5" data-testid="stats-panel">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Statistiche</div>
+          <h2 className="text-lg sm:text-xl font-display font-bold text-slate-900 mt-0.5">Il tuo mese</h2>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <button onClick={exportOlo} disabled={!total} className="rounded-full px-3 py-2 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-900 inline-flex items-center gap-1 disabled:opacity-40" data-testid="export-olo-btn">
+            <FileText size={14} /> Export OLO
+          </button>
+          <button onClick={exportAll} disabled={!total} className="rounded-full px-3 py-2 text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-white inline-flex items-center gap-1 disabled:opacity-40" data-testid="export-all-btn">
+            <FileText size={14} /> Export JSON
+          </button>
+          <button onClick={onReset} disabled={!total} className="rounded-full px-3 py-2 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 inline-flex items-center gap-1 disabled:opacity-40" data-testid="reset-month-btn">
+            <RotateCcw size={14} /> Reset mese
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
+        <div className="rounded-xl bg-slate-50 border border-slate-100 p-3" data-testid="stat-total">
+          <div className="text-[11px] text-slate-500 font-semibold">Totale note</div>
+          <div className="text-2xl font-display font-extrabold text-slate-900 mt-0.5">{total}</div>
+        </div>
+        <div className="rounded-xl bg-slate-50 border border-slate-100 p-3" data-testid="stat-today">
+          <div className="text-[11px] text-slate-500 font-semibold">Oggi</div>
+          <div className={`text-2xl font-display font-extrabold mt-0.5 ${targetOK(todayCount) ? "text-emerald-600" : "text-slate-900"}`}>{todayCount}</div>
+          <div className="text-[10px] text-slate-500 mt-0.5">target {DAILY_TARGET}/g</div>
+        </div>
+        <div className="rounded-xl bg-slate-50 border border-slate-100 p-3" data-testid="stat-daily-avg">
+          <div className="text-[11px] text-slate-500 font-semibold">Media giornaliera</div>
+          <div className={`text-2xl font-display font-extrabold mt-0.5 ${targetOK(avg) ? "text-emerald-600" : "text-red-600"}`}>{avg.toFixed(1)}</div>
+          <div className="text-[10px] text-slate-500 mt-0.5">su {daysCount} giorni</div>
+        </div>
+        <div className="rounded-xl bg-slate-50 border border-slate-100 p-3" data-testid="stat-month">
+          <div className="text-[11px] text-slate-500 font-semibold">Questo mese</div>
+          <div className="text-2xl font-display font-extrabold text-slate-900 mt-0.5">{thisMonth}</div>
+          <div className="text-[10px] text-slate-500 mt-0.5">media {monthAvg.toFixed(1)}/g</div>
+        </div>
+      </div>
+
+      {last7.length > 0 && (
+        <div className="mt-4">
+          <div className="text-xs font-semibold text-slate-500 mb-2">Ultimi giorni</div>
+          <div className="space-y-1.5" data-testid="days-breakdown">
+            {last7.map((k) => {
+              const c = byDay[k].length;
+              const pct = (c / maxCount) * 100;
+              const ok = targetOK(c);
+              return (
+                <div key={k} className="flex items-center gap-2 text-xs" data-testid={`day-row-${k}`}>
+                  <div className="w-20 shrink-0 font-mono text-slate-600">{humanDate(k)}</div>
+                  <div className="flex-1 h-6 bg-slate-100 rounded-md overflow-hidden">
+                    <div className={`h-full ${ok ? "bg-emerald-500" : "bg-brand-pink"} transition-all`} style={{ width: `${Math.max(6, pct)}%` }} />
+                  </div>
+                  <div className={`w-8 text-right font-semibold ${ok ? "text-emerald-600" : "text-slate-700"}`}>{c}</div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="text-[10px] text-slate-400 mt-2">Target: {DAILY_TARGET} note/giorno · verde = raggiunto</div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 // ---------- Main app content (authenticated) ----------
 function AppContent() {
   const { user } = useAuth();
@@ -707,6 +839,17 @@ function AppContent() {
     finally { setDeleting(false); }
   };
 
+  const resetMonth = async () => {
+    if (!notes.length) return;
+    if (!window.confirm(`ATTENZIONE: verranno eliminate tutte le ${notes.length} note. Assicurati di aver esportato i dati prima.\n\nProcedere con il reset?`)) return;
+    try {
+      const r = await axios.post(`${API}/notes/bulk-delete`, { ids: notes.map((n) => n.id) });
+      toast.success(`Reset completato: ${r.data.deleted} note eliminate`);
+      setSelectedIds([]);
+      fetchNotes();
+    } catch (e) { toast.error(errorText(e)); }
+  };
+
   const openScanner = (onScan) => { setScanner({ onScan }); setScanTarget(null); };
   const closeScanner = () => { setScanner(null); setScanTarget(null); };
   const handleScan = (value, target) => {
@@ -720,6 +863,8 @@ function AppContent() {
       <Toaster richColors position="top-center" />
       <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-10 space-y-6" data-testid="main-content">
         <PdfUploader onParsed={handleParsed} />
+
+        <StatsPanel notes={notes} onReset={resetMonth} />
 
         <section className="bg-white border border-slate-200 rounded-2xl card-shadow p-4 sm:p-5">
           <div className="flex items-center justify-between gap-3">
@@ -769,13 +914,31 @@ function AppContent() {
               Nessuna nota. Carica un PDF Open Fiber per iniziare.
             </div>
           ) : (
-            <div className="space-y-3">
-              {notes.map((n) => (
-                <NoteCard key={n.id} note={n} defaultOpen={lastCreatedIds.includes(n.id)}
-                  onChanged={fetchNotes}
-                  selected={selectedIds.includes(n.id)} onToggleSelect={toggleSelect}
-                  onOpenScanner={openScanner} />
-              ))}
+            <div className="space-y-6" data-testid="notes-groups">
+              {(() => {
+                const groups = notes.reduce((acc, n) => {
+                  const k = localDateKey(n.created_at);
+                  (acc[k] = acc[k] || []).push(n);
+                  return acc;
+                }, {});
+                const keys = Object.keys(groups).sort().reverse();
+                return keys.map((k) => (
+                  <div key={k} data-testid={`day-group-${k}`}>
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="text-xs font-mono font-semibold text-slate-700 bg-slate-100 border border-slate-200 rounded-full px-3 py-1">{humanDate(k)}</div>
+                      <div className={`text-xs font-semibold ${groups[k].length >= DAILY_TARGET ? "text-emerald-600" : "text-slate-500"}`}>{groups[k].length} note</div>
+                      <div className="flex-1 h-px bg-slate-100" />
+                    </div>
+                    <div className="space-y-3">
+                      {groups[k].map((n) => (
+                        <NoteCard key={n.id} note={n} defaultOpen={lastCreatedIds.includes(n.id)}
+                          onChanged={fetchNotes} selected={selectedIds.includes(n.id)} onToggleSelect={toggleSelect}
+                          onOpenScanner={openScanner} />
+                      ))}
+                    </div>
+                  </div>
+                ));
+              })()}
             </div>
           )}
         </section>

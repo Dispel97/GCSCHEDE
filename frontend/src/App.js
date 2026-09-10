@@ -216,20 +216,66 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect }) {
     }
   };
 
-  const sendGmail = () => {
+  const [sending, setSending] = useState(false);
+
+  const sendGmail = async () => {
     const subject = `WR: ${note.wr}`;
-    const body = noteText;
     const to = RECIPIENTS.join(",");
-    const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&tf=1&to=${encodeURIComponent(to)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    // Use a real anchor click — avoids popup blockers in most browsers
-    const a = document.createElement("a");
-    a.href = gmailUrl;
-    a.target = "_blank";
-    a.rel = "noopener noreferrer";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    toast.message("Ricorda di allegare foto e PDF prima di inviare");
+    const body = `${noteText}\n\n---\nDestinatari: ${RECIPIENTS.join(", ")}`;
+
+    setSending(true);
+    try {
+      // Copia i destinatari negli appunti così l'utente li incolla nel campo A: se necessario
+      try { await navigator.clipboard.writeText(RECIPIENTS.join(", ")); } catch (_) {}
+
+      // Tenta Web Share API con file (PDF + foto) — apre lo share sheet del dispositivo,
+      // l'utente sceglie Gmail e i file sono già allegati.
+      if (navigator.canShare && (note.pdf_storage_path || (note.photos && note.photos.length))) {
+        try {
+          const files = [];
+          if (note.pdf_storage_path) {
+            const r = await fetch(`${API}/files?path=${encodeURIComponent(note.pdf_storage_path)}`);
+            if (r.ok) {
+              const b = await r.blob();
+              files.push(new File([b], note.pdf_filename || `pratica_WR_${note.wr}.pdf`, { type: "application/pdf" }));
+            }
+          }
+          for (const p of note.photos || []) {
+            const r = await fetch(`${API}/files?path=${encodeURIComponent(p.storage_path)}`);
+            if (r.ok) {
+              const b = await r.blob();
+              files.push(new File([b], p.filename || `foto_${p.id}.jpg`, { type: p.content_type || "image/jpeg" }));
+            }
+          }
+          const shareData = { title: subject, text: body, files };
+          if (files.length && navigator.canShare(shareData)) {
+            await navigator.share(shareData);
+            toast.success("Condivisione aperta — seleziona Gmail, i destinatari sono già copiati");
+            setSending(false);
+            return;
+          }
+        } catch (err) {
+          if (err && err.name === "AbortError") {
+            setSending(false);
+            return; // utente ha annullato lo share
+          }
+          console.warn("Web Share fallita, fallback a Gmail compose", err);
+        }
+      }
+
+      // Fallback: apri Gmail compose (webmail) con destinatari, oggetto e corpo
+      const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&tf=1&to=${encodeURIComponent(to)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(noteText)}`;
+      const a = document.createElement("a");
+      a.href = gmailUrl;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      toast.message("Gmail aperto — allega manualmente PDF e foto (destinatari già copiati negli appunti)");
+    } finally {
+      setSending(false);
+    }
   };
 
   const save = async () => {
@@ -300,9 +346,9 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect }) {
               data-testid={`copy-note-button-${note.wr}`}>
               <Copy size={14} /> Copia nota
             </button>
-            <button onClick={sendGmail} className="btn-primary rounded-full px-3 py-2 text-xs font-semibold inline-flex items-center gap-2"
+            <button onClick={sendGmail} disabled={sending} className="btn-primary rounded-full px-3 py-2 text-xs font-semibold inline-flex items-center gap-2 disabled:opacity-60"
               data-testid={`send-gmail-button-${note.wr}`}>
-              <Mail size={14} /> Invia tramite Gmail
+              {sending ? <Loader2 className="animate-spin" size={14} /> : <Mail size={14} />} Invia tramite Gmail
             </button>
             {note.pdf_storage_path ? (
               <a href={`${API}/files?path=${encodeURIComponent(note.pdf_storage_path)}`} target="_blank" rel="noopener noreferrer"
@@ -319,6 +365,10 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect }) {
               data-testid={`delete-note-${note.wr}`}>
               <Trash2 size={14} /> Elimina
             </button>
+          </div>
+
+          <div className="mt-2 text-[11px] text-slate-500 leading-relaxed" data-testid={`gmail-hint-${note.wr}`}>
+            <strong>Suggerimento:</strong> su mobile "Invia tramite Gmail" apre la condivisione del sistema con PDF e foto già allegati (scegli l'app Gmail). I destinatari vengono copiati negli appunti — incollali nel campo "A:". Su desktop apre Gmail Web e devi allegare i file manualmente.
           </div>
 
           {edit && (

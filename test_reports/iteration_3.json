@@ -1,0 +1,25 @@
+{
+  "summary": "Iteration 3 focus: new Web Share API path in NoteCard.sendGmail (App.js). Verified all 4 branches via Playwright with navigator.share/canShare stubs injected via context.add_init_script, plus backend regression for /api/pdf/parse, /api/notes/bulk-delete, and /api/files (application/pdf bytes). Everything passes.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_bulk_delete.py",
+    "/app/backend/tests/test_files_endpoint.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "App.js sendGmail: only the *first* clipboard.writeText is called (recipients). This is intentional but note that on desktop fallback path the user still needs to paste recipients; the toast 'Gmail aperto — allega manualmente PDF e foto (destinatari già copiati negli appunti)' correctly informs the user.",
+    "sendGmail catches AbortError inside the inner try but *also* the outer finally resets sending — behavior verified correct.",
+    "App.js is ~575 lines; still under the 700-line soft threshold but growing — consider splitting NoteCard/PhotoManager/PdfUploader into modules soon.",
+    "Backend /api/files returns 404 on any exception from object storage — consider distinguishing 404 vs 500 for observability."
+  ],
+  "updated_files": ["/app/backend/tests/test_files_endpoint.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "none",
+  "seed_data_creation": "Test uploads /tmp/sample.pdf and cleans up via bulk-delete after run",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend pytest suite (5 tests) at /app/backend/tests/ all pass. Playwright verification of sendGmail covered: (1) share resolves -> navigator.share called ONCE with title='WR: <code>', text containing full note body + 'Destinatari: <5 emails comma-joined>', files array containing at least the PDF (application/pdf, filename ending in .pdf); clipboard.writeText called with recipients CSV; NO fallback tab opened; success toast 'Condivisione aperta — seleziona Gmail' shown. (2) share rejects with AbortError -> no fallback opened. (3) share rejects with non-Abort (NotAllowedError) -> fallback Gmail compose URL opens in new tab (URL includes to=<all 5 recipients>, su=WR: <code>, body=<note>). (4) canShare returns false -> navigator.share NOT called and Gmail fallback opens. Hint text data-testid='gmail-hint-<wr>' verified present with expected content about PDF/foto attached and destinatari copied. Sending button spinner (Loader2) toggles disabled during await and re-enables after (verified disabled=None after resolve).",
+  "rca of the issue": "N/A — verification of implemented feature, no bugs found."
+}

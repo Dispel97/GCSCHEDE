@@ -3,11 +3,23 @@ import axios from "axios";
 import { Toaster, toast } from "sonner";
 import {
   Upload, FileText, Copy, Mail, Trash2, Image as ImageIcon,
-  Loader2, Search, ChevronDown, ChevronUp, Save, X, Camera,
+  Loader2, Search, ChevronDown, ChevronUp, Save, X, Camera, RotateCcw,
 } from "lucide-react";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
+
+// Personal device identifier — stored in localStorage; unique per browser.
+function getDeviceId() {
+  let id = localStorage.getItem("gc_device_id");
+  if (!id) {
+    id = (crypto.randomUUID && crypto.randomUUID()) || `dev-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    localStorage.setItem("gc_device_id", id);
+  }
+  return id;
+}
+const DEVICE_ID = getDeviceId();
+axios.defaults.headers.common["X-Owner-Key"] = DEVICE_ID;
 
 const RECIPIENTS = [
   "g.c.impiantiufficio@gmail.com",
@@ -21,7 +33,20 @@ const LOGO_GC = "https://customer-assets-jai6qajn.emergentagent.net/job_ccf322e9
 const LOGO_OF = "https://customer-assets-jai6qajn.emergentagent.net/job_ccf322e9-af2b-47ac-bdda-c765aa29fe4c/artifacts/hfc42618_Open_Fiber_logo.svg.png";
 
 const composeNote = (n) => {
-  const tech = `${n.splitter || ""} ${n.via || ""} PTE-EST PFS ${n.n_porta_perm || ""} PTE ${n.porta_pte || ""} TS TC D A MONO INT`;
+  const parts = [
+    n.splitter || "",
+    n.via || "",
+    n.pte_est ?? "PTE-EST",
+    `PFS ${n.n_porta_perm || ""}`,
+    `PTE ${n.porta_pte || ""}`,
+    n.ts ?? "TS",
+    n.tc ?? "TC",
+    n.d ?? "D",
+    n.a ?? "A",
+    n.mono ?? "MONO",
+    n.internal ?? "INT",
+  ].filter((p) => p !== undefined && p !== null && String(p).trim() !== "");
+  const tech = parts.join(" ");
   return `WR: ${n.wr || ""}\n${(n.cliente || "").toLowerCase()}\n${n.olo || ""}\n${tech}\nCPE: ${n.cpe || ""}\n(ONT/SFP): ${n.ont_sfp || ""}`;
 };
 
@@ -202,10 +227,24 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect }) {
   const [edit, setEdit] = useState(false);
   const [form, setForm] = useState(note);
   const [saving, setSaving] = useState(false);
+  const [noteDraft, setNoteDraft] = useState(note.note_text || composeNote(note));
+  const [noteDirty, setNoteDirty] = useState(false);
 
-  useEffect(() => { setForm(note); }, [note]);
+  useEffect(() => {
+    setForm(note);
+    if (!noteDirty) setNoteDraft(note.note_text || composeNote(note));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [note]);
 
-  const noteText = edit ? composeNote(form) : (note.note_text || composeNote(note));
+  // Live compose from form when editing structured fields (unless user has manually edited noteDraft)
+  useEffect(() => {
+    if (edit && !noteDirty && !note.note_text_manual) {
+      setNoteDraft(composeNote(form));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form, edit]);
+
+  const noteText = noteDraft;
 
   const copy = async () => {
     try {
@@ -285,15 +324,39 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect }) {
         cliente: form.cliente, olo: form.olo, splitter: form.splitter,
         via: form.via, n_porta_perm: form.n_porta_perm, porta_pte: form.porta_pte,
         cpe: form.cpe, ont_sfp: form.ont_sfp, indirizzo: form.indirizzo,
+        pte_est: form.pte_est ?? "PTE-EST",
+        ts: form.ts ?? "TS", tc: form.tc ?? "TC",
+        d: form.d ?? "D", a: form.a ?? "A",
+        mono: form.mono ?? "MONO", internal: form.internal ?? "INT",
       };
+      // If the user has manually edited the free-text note, send it as override
+      if (noteDirty) {
+        payload.note_text = noteDraft;
+        payload.note_text_manual = true;
+      } else {
+        payload.note_text_manual = false;
+      }
       await axios.patch(`${API}/notes/${note.id}`, payload);
-      toast.success("Nota aggiornata");
+      toast.success("Nota salvata");
+      setNoteDirty(false);
       setEdit(false);
       onChanged?.();
     } catch (e) {
       toast.error("Errore salvataggio");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const regenerateFromFields = async () => {
+    try {
+      const res = await axios.post(`${API}/notes/${note.id}/regenerate`);
+      setNoteDraft(res.data.note_text);
+      setNoteDirty(false);
+      toast.success("Nota rigenerata dai campi");
+      onChanged?.();
+    } catch (e) {
+      toast.error("Errore rigenerazione");
     }
   };
 
@@ -359,7 +422,7 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect }) {
             ) : null}
             <button onClick={() => setEdit(!edit)} className="btn-ghost rounded-full px-3 py-2 text-xs font-semibold bg-slate-100 text-slate-800 inline-flex items-center gap-2 hover:bg-slate-200"
               data-testid={`edit-toggle-${note.wr}`}>
-              {edit ? "Chiudi modifica" : "Modifica campi"}
+              {edit ? "Nascondi campi" : "Modifica campi"}
             </button>
             <button onClick={del} className="btn-ghost rounded-full px-3 py-2 text-xs font-semibold text-red-600 bg-red-50 inline-flex items-center gap-2 hover:bg-red-100 ml-auto"
               data-testid={`delete-note-${note.wr}`}>
@@ -372,14 +435,21 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect }) {
           </div>
 
           {edit && (
-            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3" data-testid={`edit-form-${note.wr}`}>
               {[
                 { k: "cliente", label: "Cliente (D)" },
                 { k: "olo", label: "Descrizione OLO" },
                 { k: "splitter", label: "Porta uscita splitter PFS (BA_)" },
                 { k: "via", label: "VIA (dopo A662_)" },
+                { k: "pte_est", label: "PTE-EST" },
                 { k: "n_porta_perm", label: "PFS (N. porta perm.)" },
                 { k: "porta_pte", label: "PTE (Porta PTE)" },
+                { k: "ts", label: "TS" },
+                { k: "tc", label: "TC" },
+                { k: "d", label: "D" },
+                { k: "a", label: "A" },
+                { k: "mono", label: "MONO" },
+                { k: "internal", label: "INT" },
                 { k: "cpe", label: "CPE" },
                 { k: "ont_sfp", label: "ONT / SFP" },
               ].map((f) => (
@@ -387,26 +457,48 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect }) {
                   {f.label}
                   <input
                     type="text"
-                    value={form[f.k] || ""}
-                    onChange={(e) => setForm({ ...form, [f.k]: e.target.value })}
+                    value={form[f.k] ?? ""}
+                    onChange={(e) => { setForm({ ...form, [f.k]: e.target.value }); setNoteDirty(false); }}
                     className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-pink focus:border-transparent"
                     data-testid={`field-${f.k}-${note.wr}`}
                   />
                 </label>
               ))}
-              <div className="sm:col-span-2 flex gap-2">
-                <button onClick={save} disabled={saving}
-                  className="btn-primary rounded-full px-4 py-2 text-xs font-semibold inline-flex items-center gap-2"
-                  data-testid={`save-note-${note.wr}`}>
-                  {saving ? <Loader2 className="animate-spin" size={14} /> : <Save size={14} />} Salva modifiche
-                </button>
-              </div>
             </div>
           )}
 
           <div className="mt-4">
-            <div className="text-xs font-medium text-slate-500 mb-1">Anteprima nota</div>
-            <pre className="note-block" data-testid={`note-preview-${note.wr}`}>{noteText}</pre>
+            <div className="flex items-center justify-between mb-1">
+              <div className="text-xs font-medium text-slate-500">
+                Nota (modificabile){noteDirty ? <span className="ml-2 text-brand-pink brand-pink">• modificata manualmente</span> : null}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={regenerateFromFields}
+                  className="text-[11px] font-semibold text-slate-600 hover:text-slate-900 inline-flex items-center gap-1"
+                  data-testid={`regenerate-note-${note.wr}`}
+                  title="Ripristina la nota generata automaticamente dai campi"
+                >
+                  <RotateCcw size={12} /> Rigenera dai campi
+                </button>
+              </div>
+            </div>
+            <textarea
+              value={noteText}
+              onChange={(e) => { setNoteDraft(e.target.value); setNoteDirty(true); }}
+              rows={8}
+              spellCheck={false}
+              className="note-block w-full outline-none resize-y focus:ring-2 focus:ring-brand-pink/60"
+              data-testid={`note-preview-${note.wr}`}
+            />
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button onClick={save} disabled={saving}
+                className="btn-primary rounded-full px-4 py-2 text-xs font-semibold inline-flex items-center gap-2 disabled:opacity-60"
+                data-testid={`save-note-${note.wr}`}>
+                {saving ? <Loader2 className="animate-spin" size={14} /> : <Save size={14} />} Salva nota
+              </button>
+              <span className="text-[11px] text-slate-500 self-center">Ogni modifica libera è personale e visibile solo su questo dispositivo.</span>
+            </div>
           </div>
 
           <div className="mt-4">
@@ -506,6 +598,9 @@ export default function App() {
           <div className="flex flex-wrap items-center gap-3 mb-3">
             <h2 className="text-lg sm:text-xl font-display font-bold text-slate-900">Note</h2>
             <span className="text-xs text-slate-500">{notes.length} totali</span>
+            <span className="text-[10px] font-mono text-slate-400 hidden sm:inline" title={`Device ID: ${DEVICE_ID}`} data-testid="device-id-badge">
+              registro personale • dispositivo {DEVICE_ID.slice(0, 8)}
+            </span>
             <div className="ml-auto relative w-full sm:w-80">
               <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input

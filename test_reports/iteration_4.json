@@ -1,0 +1,33 @@
+{
+  "summary": "Iteration 4 testing — X-Owner-Key isolation + fully editable notes. Backend: 13/13 pytest passed (test_owner_isolation.py). Fixed one MongoDB _id serialization bug in POST /api/pdf/parse (motor's insert_one mutates the doc adding ObjectId, which broke the JSON response). Frontend: verified DEVICE_ID stored in localStorage under 'gc_device_id', axios X-Owner-Key header sent on all /api/* requests, device-id-badge shows 'registro personale • dispositivo <first-8-chars>', per-device isolation confirmed (clearing localStorage produces empty list), full note editability confirmed (textarea editable, manual indicator, TS/TC/D/A/MONO/INT/PTE-EST fields under 'Modifica campi' live-update textarea, Salva nota, Rigenera dai campi restores text).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_owner_isolation.py",
+    "/app/test_reports/pytest/iter4_isolation.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py POST /pdf/parse previously passed the same dict reference to motor.insert_one AND to the response list; motor mutates the dict with _id (ObjectId) causing 500 on JSON serialization. Fixed by inserting a copy (dict(doc)) so response stays clean. Consider using a helper like insert_and_get(clean_dict) across the codebase to avoid re-introduction.",
+    "PATCH /notes/{id} returns the fetched doc after in-place merge; because _authorize_note reads with projection {_id: 0} this is safe, but a similar bug pattern exists — a future refactor risks passing the returned doc into $set without projection. Consider always doing db.notes.find_one_and_update with return_document=AFTER + projection.",
+    "regenerate_note_text uses defaults like 'TS','TC','D','A','MONO','INT' — legacy notes without these fields will show placeholder tokens. This is intentional per spec (user-editable) but worth documenting."
+  ],
+  "updated_files": [
+    "/app/backend/server.py (fixed ObjectId mutation in /pdf/parse response)",
+    "/app/backend/tests/test_owner_isolation.py (new)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "None required (no auth in this app).",
+  "seed_data_creation": "Backend test fixture created 4+4 notes under owner_keys DEV-A-iter4-test and DEV-B-iter4-test, all cleaned up via bulk-delete at end of module. No stray data (verified: GET /api/notes without header returns 0).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 4 fully passed. Backend fix committed in server.py line ~342: dict(doc) before insert_one to prevent motor mutation adding ObjectId. Regression suite: /app/backend/tests/test_owner_isolation.py + previous tests test_bulk_delete.py, test_files_endpoint.py. Frontend note UI has editable <textarea data-testid='note-preview-<wr>'>, structured fields under 'Modifica campi' toggle with data-testid='field-<key>-<wr>'.",
+  "rca of the issue": "Bug: POST /api/pdf/parse returned 500 when returning newly-created notes. RCA: motor's insert_one mutates the supplied dict by inserting _id: ObjectId(...). The same dict reference was appended to created_notes then returned by FastAPI → jsonable_encoder fails on ObjectId. Fix: pass a shallow copy `dict(doc)` to insert_one so the response list retains a clean dict without _id."
+}

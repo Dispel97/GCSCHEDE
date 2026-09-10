@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException, Response, Query, Header
+from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException, Response, Query, Header, Request
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -74,6 +74,26 @@ def get_object(path: str):
         resp = requests.get(f"{STORAGE_URL}/objects/{path}", headers={"X-Storage-Key": key}, timeout=60)
     resp.raise_for_status()
     return resp.content, resp.headers.get("Content-Type", "application/octet-stream")
+
+
+# ---------- Helpers ----------
+def client_ip_from(request: Request) -> str:
+    fwd = request.headers.get("x-forwarded-for") or ""
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else ""
+
+
+def owner_query(owner_key: Optional[str], client_ip: str) -> dict:
+    """Filter matches records for this device (owner_key) OR from same IP as fallback."""
+    conds = []
+    if owner_key:
+        conds.append({"owner_key": owner_key})
+    if client_ip:
+        conds.append({"client_ip": client_ip, "owner_key": {"$in": ["", None]}})
+    if not conds:
+        return {"_never_match_": True}
+    return {"$or": conds} if len(conds) > 1 else conds[0]
 
 
 # ---------- PDF Parser ----------
@@ -180,8 +200,13 @@ def parse_openfiber_pdf(pdf_bytes: bytes):
 
 def compose_note(cliente: str, olo: str, splitter: str, via: str,
                  n_porta_perm: str, porta_pte: str,
-                 cpe: str = '', ont_sfp: str = '', wr: str = '') -> str:
-    tech = f"{splitter} {via} PTE-EST PFS {n_porta_perm} PTE {porta_pte} TS TC D A MONO INT"
+                 cpe: str = '', ont_sfp: str = '', wr: str = '',
+                 pte_est: str = 'PTE-EST',
+                 ts: str = 'TS', tc: str = 'TC', d: str = 'D', a: str = 'A',
+                 mono: str = 'MONO', internal: str = 'INT') -> str:
+    tech_parts = [splitter, via, pte_est, f"PFS {n_porta_perm}", f"PTE {porta_pte}",
+                  ts, tc, d, a, mono, internal]
+    tech = " ".join([p for p in tech_parts if p is not None and p != ''])
     return (
         f"WR: {wr}\n"
         f"{cliente.lower()}\n"
@@ -189,6 +214,17 @@ def compose_note(cliente: str, olo: str, splitter: str, via: str,
         f"{tech}\n"
         f"CPE: {cpe}\n"
         f"(ONT/SFP): {ont_sfp}"
+    )
+
+
+def regenerate_note_text(doc: dict) -> str:
+    return compose_note(
+        doc.get('cliente', ''), doc.get('olo', ''), doc.get('splitter', ''),
+        doc.get('via', ''), doc.get('n_porta_perm', ''), doc.get('porta_pte', ''),
+        doc.get('cpe', ''), doc.get('ont_sfp', ''), doc.get('wr', ''),
+        doc.get('pte_est', 'PTE-EST'),
+        doc.get('ts', 'TS'), doc.get('tc', 'TC'), doc.get('d', 'D'),
+        doc.get('a', 'A'), doc.get('mono', 'MONO'), doc.get('internal', 'INT'),
     )
 
 
@@ -213,10 +249,20 @@ class Note(BaseModel):
     cpe: str = ''
     ont_sfp: str = ''
     indirizzo: str = ''
+    pte_est: str = 'PTE-EST'
+    ts: str = 'TS'
+    tc: str = 'TC'
+    d: str = 'D'
+    a: str = 'A'
+    mono: str = 'MONO'
+    internal: str = 'INT'
     note_text: str = ''
+    note_text_manual: bool = False
     photos: List[Photo] = Field(default_factory=list)
     pdf_filename: str = ''
     pdf_storage_path: str = ''
+    owner_key: str = ''
+    client_ip: str = ''
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -231,6 +277,15 @@ class NoteUpdate(BaseModel):
     cpe: Optional[str] = None
     ont_sfp: Optional[str] = None
     indirizzo: Optional[str] = None
+    pte_est: Optional[str] = None
+    ts: Optional[str] = None
+    tc: Optional[str] = None
+    d: Optional[str] = None
+    a: Optional[str] = None
+    mono: Optional[str] = None
+    internal: Optional[str] = None
+    note_text: Optional[str] = None
+    note_text_manual: Optional[bool] = None
 
 
 # ---------- Routes ----------
@@ -240,16 +295,21 @@ async def root():
 
 
 @api_router.post("/pdf/parse")
-async def parse_pdf(file: UploadFile = File(...)):
+async def parse_pdf(
+    request: Request,
+    file: UploadFile = File(...),
+    x_owner_key: Optional[str] = Header(None, alias="X-Owner-Key"),
+):
     if not file.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Deve essere un file PDF")
     data = await file.read()
+    ip = client_ip_from(request)
+    owner = x_owner_key or ''
 
-    # Persist PDF for later attachment/redownload
     pdf_path = f"{APP_NAME}/pdfs/{uuid.uuid4()}.pdf"
     try:
         put_object(pdf_path, data, "application/pdf")
-    except Exception as e:
+    except Exception:
         logging.exception("PDF storage failed")
         pdf_path = ''
 
@@ -274,14 +334,13 @@ async def parse_pdf(file: UploadFile = File(...)):
             indirizzo=item['indirizzo'],
             pdf_filename=file.filename,
             pdf_storage_path=pdf_path,
+            owner_key=owner,
+            client_ip=ip,
         )
-        note.note_text = compose_note(
-            note.cliente, note.olo, note.splitter, note.via,
-            note.n_porta_perm, note.porta_pte, note.cpe, note.ont_sfp, note.wr
-        )
+        note.note_text = regenerate_note_text(note.model_dump())
         doc = note.model_dump()
-        await db.notes.insert_one(doc)
-        created_notes.append(note.model_dump())
+        await db.notes.insert_one(dict(doc))
+        created_notes.append(doc)
 
     skipped = [p['wr'] for p in parsed if not p['is_numeric']]
     return {
@@ -294,42 +353,94 @@ async def parse_pdf(file: UploadFile = File(...)):
 
 
 @api_router.get("/notes")
-async def list_notes(search: str = Query('', description="filter WR/cliente/OLO")):
-    q = {}
+async def list_notes(
+    request: Request,
+    search: str = Query(''),
+    x_owner_key: Optional[str] = Header(None, alias="X-Owner-Key"),
+):
+    ip = client_ip_from(request)
+    q = owner_query(x_owner_key, ip)
     if search:
         rx = {"$regex": re.escape(search), "$options": "i"}
-        q = {"$or": [{"wr": rx}, {"cliente": rx}, {"olo": rx}]}
+        q = {"$and": [q, {"$or": [{"wr": rx}, {"cliente": rx}, {"olo": rx}]}]}
     docs = await db.notes.find(q, {"_id": 0}).sort("created_at", -1).to_list(1000)
     return docs
 
 
-@api_router.get("/notes/{note_id}")
-async def get_note(note_id: str):
+async def _authorize_note(note_id: str, owner_key: Optional[str], ip: str) -> dict:
     doc = await db.notes.find_one({"id": note_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Nota non trovata")
+    note_owner = doc.get('owner_key') or ''
+    note_ip = doc.get('client_ip') or ''
+    if note_owner:
+        if note_owner != (owner_key or ''):
+            raise HTTPException(status_code=403, detail="Nota non accessibile da questo dispositivo")
+    else:
+        # legacy note without owner_key -> match by IP
+        if note_ip and note_ip != ip:
+            raise HTTPException(status_code=403, detail="Nota non accessibile da questo IP")
     return doc
 
 
+@api_router.get("/notes/{note_id}")
+async def get_note(
+    note_id: str,
+    request: Request,
+    x_owner_key: Optional[str] = Header(None, alias="X-Owner-Key"),
+):
+    ip = client_ip_from(request)
+    return await _authorize_note(note_id, x_owner_key, ip)
+
+
 @api_router.patch("/notes/{note_id}")
-async def update_note(note_id: str, upd: NoteUpdate):
-    doc = await db.notes.find_one({"id": note_id}, {"_id": 0})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Nota non trovata")
+async def update_note(
+    note_id: str,
+    upd: NoteUpdate,
+    request: Request,
+    x_owner_key: Optional[str] = Header(None, alias="X-Owner-Key"),
+):
+    ip = client_ip_from(request)
+    doc = await _authorize_note(note_id, x_owner_key, ip)
     updates = {k: v for k, v in upd.model_dump().items() if v is not None}
-    doc.update(updates)
-    doc['note_text'] = compose_note(
-        doc.get('cliente', ''), doc.get('olo', ''), doc.get('splitter', ''),
-        doc.get('via', ''), doc.get('n_porta_perm', ''), doc.get('porta_pte', ''),
-        doc.get('cpe', ''), doc.get('ont_sfp', ''), doc.get('wr', '')
-    )
+
+    # If user directly edited note_text, mark manual and don't regenerate
+    if 'note_text' in updates:
+        doc.update(updates)
+        doc['note_text_manual'] = updates.get('note_text_manual', True)
+    else:
+        doc.update(updates)
+        if not doc.get('note_text_manual', False):
+            doc['note_text'] = regenerate_note_text(doc)
+
+    doc['updated_at'] = datetime.now(timezone.utc).isoformat()
+    await db.notes.update_one({"id": note_id}, {"$set": doc})
+    return doc
+
+
+@api_router.post("/notes/{note_id}/regenerate")
+async def regenerate_note(
+    note_id: str,
+    request: Request,
+    x_owner_key: Optional[str] = Header(None, alias="X-Owner-Key"),
+):
+    ip = client_ip_from(request)
+    doc = await _authorize_note(note_id, x_owner_key, ip)
+    doc['note_text'] = regenerate_note_text(doc)
+    doc['note_text_manual'] = False
     doc['updated_at'] = datetime.now(timezone.utc).isoformat()
     await db.notes.update_one({"id": note_id}, {"$set": doc})
     return doc
 
 
 @api_router.delete("/notes/{note_id}")
-async def delete_note(note_id: str):
+async def delete_note(
+    note_id: str,
+    request: Request,
+    x_owner_key: Optional[str] = Header(None, alias="X-Owner-Key"),
+):
+    ip = client_ip_from(request)
+    await _authorize_note(note_id, x_owner_key, ip)
     res = await db.notes.delete_one({"id": note_id})
     return {"deleted": res.deleted_count}
 
@@ -339,18 +450,30 @@ class BulkDeleteRequest(BaseModel):
 
 
 @api_router.post("/notes/bulk-delete")
-async def bulk_delete_notes(req: BulkDeleteRequest):
+async def bulk_delete_notes(
+    req: BulkDeleteRequest,
+    request: Request,
+    x_owner_key: Optional[str] = Header(None, alias="X-Owner-Key"),
+):
     if not req.ids:
         return {"deleted": 0}
-    res = await db.notes.delete_many({"id": {"$in": req.ids}})
+    ip = client_ip_from(request)
+    # Only delete notes owned by this device/IP
+    scope = owner_query(x_owner_key, ip)
+    q = {"$and": [scope, {"id": {"$in": req.ids}}]}
+    res = await db.notes.delete_many(q)
     return {"deleted": res.deleted_count}
 
 
 @api_router.post("/notes/{note_id}/photos")
-async def upload_photos(note_id: str, files: List[UploadFile] = File(...)):
-    doc = await db.notes.find_one({"id": note_id}, {"_id": 0})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Nota non trovata")
+async def upload_photos(
+    note_id: str,
+    request: Request,
+    files: List[UploadFile] = File(...),
+    x_owner_key: Optional[str] = Header(None, alias="X-Owner-Key"),
+):
+    ip = client_ip_from(request)
+    doc = await _authorize_note(note_id, x_owner_key, ip)
     photos = doc.get('photos', [])
     for f in files:
         ext = (f.filename.rsplit('.', 1)[-1] if '.' in f.filename else 'jpg').lower()
@@ -371,10 +494,14 @@ async def upload_photos(note_id: str, files: List[UploadFile] = File(...)):
 
 
 @api_router.delete("/notes/{note_id}/photos/{photo_id}")
-async def delete_photo(note_id: str, photo_id: str):
-    doc = await db.notes.find_one({"id": note_id}, {"_id": 0})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Nota non trovata")
+async def delete_photo(
+    note_id: str,
+    photo_id: str,
+    request: Request,
+    x_owner_key: Optional[str] = Header(None, alias="X-Owner-Key"),
+):
+    ip = client_ip_from(request)
+    doc = await _authorize_note(note_id, x_owner_key, ip)
     photos = [p for p in doc.get('photos', []) if p.get('id') != photo_id]
     await db.notes.update_one(
         {"id": note_id},
@@ -387,7 +514,7 @@ async def delete_photo(note_id: str, photo_id: str):
 async def download_file(path: str = Query(...)):
     try:
         data, ct = get_object(path)
-    except Exception as e:
+    except Exception:
         raise HTTPException(status_code=404, detail="File non trovato")
     return Response(content=data, media_type=ct)
 

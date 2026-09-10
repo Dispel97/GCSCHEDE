@@ -1,0 +1,36 @@
+{
+  "summary": "First iteration smoke test: backend PDF parse + notes CRUD + photos + files fully working; frontend upload, note preview, Gmail compose, copy, edit, search and mobile layout all verified.",
+  "tested_scope": ["backend", "frontend", "integration"],
+  "passed": [
+    "POST /api/pdf/parse returns created_count=4 and skipped_wr=['a17Tk00003rnRo8IAE']",
+    "All 4 notes have exact expected values for cliente, olo, splitter, via, n_porta_perm, porta_pte (WR 17439540, 17443542, 17414109, 17017162)",
+    "PATCH /api/notes/{id} updates cpe/ont_sfp and regenerates note_text with new CPE/ONT lines",
+    "DELETE /api/notes/{id} returns {deleted:1}; subsequent GET returns 404",
+    "POST /api/notes/{id}/photos accepts image, appends photo to note.photos with storage_path/content_type",
+    "GET /api/files?path=... returns 200 with correct image/png content-type and non-empty bytes",
+    "DELETE /api/notes/{id}/photos/{photo_id} removes photo from list",
+    "GET /api/notes?search=... filters by WR, cliente (LOPEZ), and OLO substring (FW_P)",
+    "Frontend header shows both logos (2 images), 'Open Fiber' text and 'creato e amministrato da Giuseppe Belviso' credit",
+    "PDF upload zone triggers parse; toast 'WR non numerici saltati: a17Tk00003rnRo8IAE' shown; note count increases to include all 4 WR",
+    "Expanded note card shows monospace preview with exact structure: WR:, lowercase cliente, OLO, technical line 'PTE-EST PFS X PTE Y TS TC D A MONO INT', CPE:, (ONT/SFP):",
+    "Copia nota button triggers toast containing 'copiata negli appunti'",
+    "Invia tramite Gmail opens https://mail.google.com/mail/?view=cm URL with all 5 recipients (impiantiufficio, impiantisnc4, abbatiscianni, naviglio, lalario), subject 'WR: 17017162', body = full composed note text",
+    "Modifica campi edit form updates the note preview live (CPE value reflected in <pre> preview)",
+    "Search input filters notes list (search '17414109' shows only that WR, hides LOPEZ)",
+    "Mobile viewport 400x800: no horizontal overflow, header and cards remain usable"
+  ],
+  "failed": [
+    {
+      "area": "frontend/gmail-button",
+      "issue": "Invia tramite Gmail button invokes window.open twice: first call with 'null' argument (likely a focus/reset artifact) followed by the correct Gmail compose URL. Functional behavior unaffected (Gmail tab still opens correctly).",
+      "evidence": "Playwright intercept: URL[0]='null', URL[1]='https://mail.google.com/mail/?view=cm&fs=1&to=...&su=WR%3A%2017017162&body=...'",
+      "priority": "LOW"
+    }
+  ],
+  "action_items": [
+    "Optional cleanup: remove the extra window.open('null') call in the Gmail button handler (App.js) to avoid a stray popup blocker warning."
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "retest_needed": false,
+  "full_testing_deferred": true
+}

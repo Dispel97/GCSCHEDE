@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Gestione Pratiche & Note Open Fiber — GC Impianti SNC</title>
+<link rel="preconnect" href="https://cdnjs.cloudflare.com">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs" type="module"></script>
+<style>
+  :root {
+    --pink: #E5007D; --pink-hover: #C9006D;
+    --navy: #0F172A; --slate-50: #F8FAFC; --slate-100: #F1F5F9;
+    --slate-200: #E2E8F0; --slate-300: #CBD5E1;
+    --slate-500: #64748B; --slate-700: #334155; --slate-900: #0F172A;
+    --red: #DC2626; --red-bg: #FEF2F2; --green: #16A34A;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--slate-50); color: var(--slate-900); font-family: 'Inter', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  h1, h2, h3, .display { font-family: 'Outfit', 'Inter', sans-serif; letter-spacing: -0.01em; }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  header.app { background: #fff; border-bottom: 1px solid var(--slate-200); }
+  header.app .inner { max-width: 1100px; margin: 0 auto; padding: 14px 20px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  header.app img { height: 44px; object-fit: contain; }
+  header.app img.gc { border-radius: 6px; }
+  header.app .divider { width: 1px; height: 32px; background: var(--slate-200); }
+  header.app .title { margin-left: auto; text-align: right; }
+  header.app .title h1 { margin: 0; font-size: 20px; font-weight: 800; color: var(--slate-900); }
+  header.app .title p { margin: 2px 0 0; font-size: 12px; color: var(--slate-500); }
+  header.app .title p strong { color: var(--slate-700); font-weight: 600; }
+  main { max-width: 1100px; margin: 0 auto; padding: 22px 20px 40px; display: grid; gap: 20px; }
+  .card { background: #fff; border: 1px solid var(--slate-200); border-radius: 16px; box-shadow: 0 1px 2px rgba(15,23,42,0.04), 0 8px 20px -14px rgba(15,23,42,0.08); }
+  .dropzone { border: 2px dashed var(--slate-300); border-radius: 16px; background: linear-gradient(180deg, #fff, #F1F5F9); padding: 28px 20px; text-align: center; transition: all .18s ease; cursor: pointer; }
+  .dropzone.drag { border-color: var(--pink); background: #FDF2F8; }
+  .dropzone .icon { width: 56px; height: 56px; border-radius: 999px; background: rgba(229,0,125,0.1); color: var(--pink); display: inline-flex; align-items: center; justify-content: center; font-size: 22px; }
+  .btn { border: 0; cursor: pointer; padding: 9px 15px; border-radius: 999px; font-weight: 600; font-size: 12.5px; display: inline-flex; align-items: center; gap: 6px; transition: background .18s ease, opacity .18s ease; font-family: inherit; }
+  .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+  .btn-primary { background: var(--pink); color: #fff; }
+  .btn-primary:hover { background: var(--pink-hover); }
+  .btn-dark { background: var(--slate-900); color: #fff; }
+  .btn-dark:hover { background: #1e293b; }
+  .btn-light { background: var(--slate-100); color: var(--slate-900); }
+  .btn-light:hover { background: var(--slate-200); }
+  .btn-danger { background: var(--red-bg); color: var(--red); }
+  .btn-danger:hover { background: #FEE2E2; }
+  input[type=text], textarea { font-family: inherit; font-size: 14px; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--slate-200); background: #fff; color: var(--slate-900); outline: none; width: 100%; }
+  input[type=text]:focus, textarea:focus { border-color: transparent; box-shadow: 0 0 0 2px rgba(229,0,125,0.6); }
+  .note-block { font-family: 'JetBrains Mono', monospace; white-space: pre-wrap; word-break: break-word; background: var(--navy); color: var(--slate-50); border-radius: 12px; padding: 14px 16px; font-size: 13px; line-height: 1.55; border: 1px solid #1E293B; }
+  textarea.note-block { resize: vertical; min-height: 190px; }
+  .wr-badge { background: #FDF2F8; color: #9D174D; border: 1px solid #FBCFE8; font-weight: 700; padding: 4px 12px; border-radius: 999px; font-size: 12px; letter-spacing: 0.02em; }
+  .recipient-tag { font-family: 'JetBrains Mono', monospace; font-size: 11px; background: var(--slate-100); color: var(--slate-900); border: 1px solid var(--slate-200); padding: 4px 8px; border-radius: 6px; }
+  .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .toolbar { padding: 10px 14px; }
+  .note-card { overflow: hidden; }
+  .note-card.selected { border-color: var(--pink); box-shadow: 0 0 0 2px rgba(229,0,125,0.15); }
+  .note-head { display: flex; align-items: center; gap: 12px; padding: 14px 18px; cursor: pointer; user-select: none; }
+  .note-head:hover { background: var(--slate-50); }
+  .note-head .title { flex: 1; min-width: 0; }
+  .note-head .title .cli { font-weight: 600; font-size: 14px; color: var(--slate-900); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .note-head .title .meta { font-size: 12px; color: var(--slate-500); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .note-body { border-top: 1px solid var(--slate-100); padding: 16px 18px; display: none; }
+  .note-card.open .note-body { display: block; }
+  .fields-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+  .field label { display: block; font-size: 11px; font-weight: 600; color: var(--slate-500); margin-bottom: 4px; }
+  .thumbs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 8px; }
+  .thumb { position: relative; aspect-ratio: 1/1; border-radius: 10px; overflow: hidden; border: 1px solid var(--slate-200); background: var(--slate-100); }
+  .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .thumb button { position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; border: 0; border-radius: 999px; background: rgba(0,0,0,0.7); color: #fff; cursor: pointer; font-size: 14px; line-height: 1; }
+  .hint { font-size: 11px; color: var(--slate-500); line-height: 1.5; margin-top: 8px; }
+  .hint strong { color: var(--slate-700); }
+  .empty { border: 1px dashed var(--slate-200); border-radius: 16px; padding: 34px 20px; text-align: center; color: var(--slate-500); font-size: 14px; background: #fff; }
+  .toast-host { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 1000; display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none; }
+  .toast { pointer-events: auto; background: #fff; border: 1px solid var(--slate-200); border-left: 3px solid var(--pink); box-shadow: 0 8px 20px -8px rgba(15,23,42,0.15); padding: 10px 14px; border-radius: 10px; font-size: 13px; color: var(--slate-900); max-width: 360px; animation: fadeIn .2s ease; }
+  .toast.success { border-left-color: var(--green); }
+  .toast.error { border-left-color: var(--red); }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+  footer { text-align: center; font-size: 11px; color: var(--slate-500); padding: 20px; }
+  footer strong { color: var(--slate-700); font-weight: 600; }
+  .search-input { position: relative; width: 100%; max-width: 320px; }
+  .search-input input { padding-left: 34px; border-radius: 999px; }
+  .search-input .icon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--slate-500); font-size: 14px; }
+  .checkbox { width: 16px; height: 16px; accent-color: var(--pink); cursor: pointer; }
+  .banner-info { font-size: 11px; padding: 8px 12px; background: #FFFBEB; border: 1px solid #FDE68A; color: #92400E; border-radius: 10px; }
+  @media (max-width: 640px) {
+    header.app .title h1 { font-size: 16px; }
+    header.app .title p { font-size: 11px; }
+    .fields-grid { grid-template-columns: 1fr; }
+    .thumbs { grid-template-columns: repeat(3, 1fr); }
+    main { padding: 14px 12px 30px; }
+    .note-head { padding: 12px 14px; gap: 10px; }
+    .note-body { padding: 12px 14px; }
+  }
+</style>
+</head>
+<body>
+<div class="toast-host" id="toastHost"></div>
+
+<header class="app">
+  <div class="inner">
+    <img class="gc" src="https://customer-assets-jai6qajn.emergentagent.net/job_ccf322e9-af2b-47ac-bdda-c765aa29fe4c/artifacts/26fm2fx6_1682096608045.jpeg" alt="GC Impianti SNC">
+    <div class="divider"></div>
+    <img src="https://customer-assets-jai6qajn.emergentagent.net/job_ccf322e9-af2b-47ac-bdda-c765aa29fe4c/artifacts/hfc42618_Open_Fiber_logo.svg.png" alt="Open Fiber">
+    <div class="title">
+      <h1>Gestione Pratiche & Note</h1>
+      <p>creato e amministrato da <strong>Giuseppe Belviso</strong></p>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div id="offlineBanner" class="banner-info" style="display:none;">
+    ⚠ Impossibile caricare il motore PDF (pdf.js). Verifica la connessione internet, oppure salva questa pagina insieme al file <code>pdf.min.mjs</code>.
+  </div>
+
+  <section class="dropzone" id="dropzone" tabindex="0">
+    <div class="icon" id="dzIcon">⬆</div>
+    <h2 style="margin: 12px 0 4px; font-size: 18px;">Carica la pratica Open Fiber (PDF)</h2>
+    <p style="margin: 0; color: var(--slate-500); font-size: 13.5px;">Trascina qui il file o clicca per selezionarlo. Note generate automaticamente per ogni WR numerico.</p>
+    <button class="btn btn-primary" id="pickBtn" style="margin-top: 14px;">📄 Seleziona PDF</button>
+    <input type="file" id="pdfInput" accept="application/pdf" style="display:none">
+  </section>
+
+  <section class="card" style="padding: 14px 16px;">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+      <div>
+        <div style="font-weight:600; font-size:14px;">Destinatari email preimpostati</div>
+        <div style="font-size:12px; color: var(--slate-500);">Verranno copiati negli appunti quando invii la nota via Gmail</div>
+      </div>
+      <div style="font-size:12px; color: var(--slate-500);">✉ 5</div>
+    </div>
+    <div class="row" style="margin-top:10px;" id="recipientsList"></div>
+  </section>
+
+  <section>
+    <div class="row" style="justify-content: space-between; margin-bottom: 10px;">
+      <div class="row" style="gap: 8px;">
+        <h2 style="margin: 0; font-size: 18px;">Note</h2>
+        <span id="noteCount" style="font-size:12px; color: var(--slate-500);"></span>
+        <span class="mono" style="font-size:10px; color: var(--slate-500);" id="deviceBadge"></span>
+      </div>
+      <div class="search-input">
+        <span class="icon">🔍</span>
+        <input type="text" id="searchInput" placeholder="Cerca WR, cliente o OLO">
+      </div>
+    </div>
+
+    <div class="card toolbar" id="bulkToolbar" style="margin-bottom: 10px; display: none;">
+      <div class="row" style="width: 100%;">
+        <label class="row" style="gap: 8px; cursor: pointer; font-size: 12px; font-weight: 500;">
+          <input type="checkbox" class="checkbox" id="selectAll"> <span id="selectAllLabel">Seleziona tutto</span>
+        </label>
+        <span id="selectionCount" style="font-size: 12px; color: var(--slate-500);">0 selezionate</span>
+        <button class="btn btn-danger" id="bulkDeleteBtn" style="margin-left:auto;" disabled>🗑 Elimina selezionate</button>
+      </div>
+    </div>
+
+    <div id="notesList" style="display: grid; gap: 10px;"></div>
+    <div id="emptyState" class="empty" style="display: none;">Nessuna nota. Carica un PDF Open Fiber per iniziare.</div>
+  </section>
+</main>
+
+<footer>creato e amministrato da <strong>Giuseppe Belviso</strong> — Versione offline standalone</footer>
+
+<script type="module">
+import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs";
+pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs";
+
+// Toast if pdf.js failed
+if (!pdfjsLib || !pdfjsLib.getDocument) {
+  document.getElementById("offlineBanner").style.display = "block";
+}
+
+const RECIPIENTS = [
+  "g.c.impiantiufficio@gmail.com",
+  "g.c.impiantisnc4@gmail.com",
+  "giuseppe.abbatiscianni@circet.it",
+  "dario.naviglio@circet.it",
+  "vito.lalario@circet.it",
+];
+
+// -------- device id (mostrato all'utente) --------
+function getDeviceId() {
+  let id = localStorage.getItem("gc_device_id");
+  if (!id) { id = (crypto.randomUUID && crypto.randomUUID()) || `dev-${Date.now()}-${Math.random().toString(36).slice(2)}`; localStorage.setItem("gc_device_id", id); }
+  return id;
+}
+const DEVICE_ID = getDeviceId();
+document.getElementById("deviceBadge").textContent = `registro personale • dispositivo ${DEVICE_ID.slice(0, 8)}`;
+
+// -------- Toasts --------
+function toast(msg, type = "info") {
+  const host = document.getElementById("toastHost");
+  const t = document.createElement("div");
+  t.className = `toast ${type}`;
+  t.textContent = msg;
+  host.appendChild(t);
+  setTimeout(() => { t.style.transition = "opacity .3s"; t.style.opacity = "0"; setTimeout(() => t.remove(), 300); }, 3200);
+}
+
+// -------- IndexedDB (photos as Blob) --------
+const DB_NAME = "gc_notes_db", DB_VERSION = 1;
+function openDB() {
+  return new Promise((res, rej) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains("photos")) db.createObjectStore("photos", { keyPath: "id" });
+    };
+    req.onsuccess = () => res(req.result);
+    req.onerror = () => rej(req.error);
+  });
+}
+async function putPhoto(id, blob, filename) {
+  const db = await openDB();
+  return new Promise((res, rej) => {
+    const tx = db.transaction("photos", "readwrite");
+    tx.objectStore("photos").put({ id, blob, filename });
+    tx.oncomplete = () => res();
+    tx.onerror = () => rej(tx.error);
+  });
+}
+async function getPhoto(id) {
+  const db = await openDB();
+  return new Promise((res) => {
+    const tx = db.transaction("photos", "readonly");
+    const req = tx.objectStore("photos").get(id);
+    req.onsuccess = () => res(req.result || null);
+    req.onerror = () => res(null);
+  });
+}
+async function deletePhoto(id) {
+  const db = await openDB();
+  return new Promise((res) => {
+    const tx = db.transaction("photos", "readwrite");
+    tx.objectStore("photos").delete(id);
+    tx.oncomplete = () => res();
+  });
+}
+
+// -------- Notes store (localStorage) --------
+const NOTES_KEY = "gc_notes_v1";
+function loadNotes() {
+  try { return JSON.parse(localStorage.getItem(NOTES_KEY) || "[]"); } catch (_) { return []; }
+}
+function saveNotes(list) { localStorage.setItem(NOTES_KEY, JSON.stringify(list)); }
+let notes = loadNotes();
+let selected = new Set();
+
+// -------- PDF Parser (column-aware, in-browser via pdf.js) --------
+async function parsePdfFile(file) {
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  const pagesGrouped = {}; // by wr
+  const order = [];
+
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const vp = page.getViewport({ scale: 1 });
+    const w = vp.width, h = vp.height;
+    const mid = w / 2;
+    const tc = await page.getTextContent();
+
+    // Bucket items into (region, line) — line = y-cluster with tolerance
+    const bucket = (arr, item) => {
+      // find a line within ±2.5pt tolerance
+      for (const line of arr) {
+        if (Math.abs(line.y - item.y) <= 2.5) { line.items.push(item); return; }
+      }
+      arr.push({ y: item.y, items: [item] });
+    };
+    const top = [], left = [], right = [];
+    for (const it of tc.items) {
+      const x = it.transform[4], y = it.transform[5];
+      const s = it.str;
+      if (!s) continue;
+      const rec = { x, y, s };
+      if (y > h - 150) { bucket(top, rec); continue; }
+      if (y < 25) continue;
+      if (x < mid) bucket(left, rec);
+      else bucket(right, rec);
+    }
+    const toText = (arr) => arr
+      .sort((a, b) => b.y - a.y) // top-to-bottom
+      .map(l => l.items.sort((a, b) => a.x - b.x).map(i => i.s).join(" ").replace(/\s+/g, " ").trim())
+      .filter(Boolean)
+      .join("\n");
+    const header = toText(top);
+    const leftTxt = toText(left);
+    const rightTxt = toText(right);
+
+    const mWr = header.match(/WR:\s*(\S+)/);
+    const wr = mWr ? mWr[1] : "";
+    if (!wr) continue;
+    if (!pagesGrouped[wr]) { pagesGrouped[wr] = { header: "", left: "", right: "" }; order.push(wr); }
+    pagesGrouped[wr].header += "\n" + header;
+    pagesGrouped[wr].left += "\n" + leftTxt;
+    pagesGrouped[wr].right += "\n" + rightTxt;
+  }
+
+  const results = [];
+  for (const wr of order) {
+    const d = pagesGrouped[wr];
+    const body = d.left + "\n" + d.right;
+    const clientMatch = d.header.match(/Cliente:\s*(.*?)\s+Indiriz\./);
+    const cliente = clientMatch ? clientMatch[1].trim() : "";
+    const oloMatch = d.header.match(/Descrizione OLO:\s*(\S+)/);
+    const olo = oloMatch ? oloMatch[1].trim() : "";
+    const indirMatch = d.header.match(/Indiriz\.:\s*(.*?)\s+Comune:/);
+    const indirizzo = indirMatch ? indirMatch[1].trim() : "";
+    const splMatch = body.match(/PORTA_DI_USCITA_SPLITTER_PFS\s*-\s*(\S+)/);
+    const splitter = splMatch ? splMatch[1].trim() : "";
+
+    // NOME_PTE multi-line within a column
+    const findMulti = (src, key) => {
+      const re = new RegExp(key + "\\s*-\\s*([^\\n]*(?:\\n(?![A-Z_]+\\s*-|\\d+\\s*-\\s*[A-Z])[^\\n]*)*)");
+      const m = src.match(re);
+      return m ? m[1].replace(/\s+/g, " ").trim() : "";
+    };
+    let nomePte = findMulti(d.left, "NOME_PTE") || findMulti(d.right, "NOME_PTE");
+    let via = "";
+    if (nomePte.includes("A662_")) via = nomePte.split("A662_")[1].trim();
+    else if (nomePte.includes("/")) { const parts = nomePte.split("/"); via = parts[parts.length - 1].trim(); }
+    else via = nomePte;
+
+    let n_pp = "";
+    const nppMatch = body.match(/N\.\s*PORTA PERM\.\s*-\s*(\S+)/);
+    if (nppMatch) { const nums = nppMatch[1].match(/\d+/g); if (nums) n_pp = String(parseInt(nums[nums.length - 1], 10)); }
+
+    let porta_pte = "";
+    for (const src of [d.left, d.right]) {
+      const val = findMulti(src, "PORTA_PTE");
+      const mm = val && val.match(/-P_?0*(\d+)/);
+      if (mm) { porta_pte = mm[1]; break; }
+    }
+
+    results.push({
+      wr, is_numeric: /^\d+$/.test(wr),
+      cliente, olo, indirizzo, splitter, via, n_porta_perm: n_pp, porta_pte
+    });
+  }
+  return results;
+}
+
+// -------- Note composition --------
+function composeNote(n) {
+  const parts = [
+    n.splitter || "",
+    n.via || "",
+    n.pte_est ?? "PTE-EST",
+    `PFS ${n.n_porta_perm || ""}`,
+    `PTE ${n.porta_pte || ""}`,
+    n.ts ?? "TS",
+    n.tc ?? "TC",
+    n.d ?? "D",
+    n.a ?? "A",
+    n.mono ?? "MONO",
+    n.internal ?? "INT",
+  ].filter(p => p !== undefined && p !== null && String(p).trim() !== "");
+  const tech = parts.join(" ");
+  return `WR: ${n.wr || ""}\n${(n.cliente || "").toLowerCase()}\n${n.olo || ""}\n${tech}\nCPE: ${n.cpe || ""}\n(ONT/SFP): ${n.ont_sfp || ""}`;
+}
+
+// -------- Render --------
+function render() {
+  const list = document.getElementById("notesList");
+  const search = document.getElementById("searchInput").value.trim().toLowerCase();
+  const filtered = notes.filter(n => !search || (n.wr || "").toLowerCase().includes(search) || (n.cliente || "").toLowerCase().includes(search) || (n.olo || "").toLowerCase().includes(search));
+  document.getElementById("noteCount").textContent = `${filtered.length} totali`;
+  document.getElementById("emptyState").style.display = filtered.length ? "none" : "block";
+  document.getElementById("bulkToolbar").style.display = notes.length ? "block" : "none";
+  document.getElementById("selectionCount").textContent = `${selected.size} selezionate`;
+  document.getElementById("bulkDeleteBtn").disabled = !selected.size;
+  const allSel = filtered.length > 0 && filtered.every(n => selected.has(n.id));
+  document.getElementById("selectAll").checked = allSel;
+  document.getElementById("selectAllLabel").textContent = allSel ? "Deseleziona tutto" : "Seleziona tutto";
+
+  list.innerHTML = "";
+  for (const n of filtered) list.appendChild(renderCard(n));
+}
+
+function renderCard(n) {
+  const card = document.createElement("div");
+  card.className = "card note-card" + (selected.has(n.id) ? " selected" : "") + (n._open ? " open" : "");
+  card.dataset.id = n.id;
+
+  const noteText = n.note_text_manual ? (n.note_text || composeNote(n)) : composeNote(n);
+
+  // Header (checkbox + toggle)
+  const head = document.createElement("div"); head.className = "note-head";
+  const cb = document.createElement("input"); cb.type = "checkbox"; cb.className = "checkbox"; cb.checked = selected.has(n.id);
+  cb.addEventListener("click", (e) => e.stopPropagation());
+  cb.addEventListener("change", () => { if (cb.checked) selected.add(n.id); else selected.delete(n.id); render(); });
+  head.appendChild(cb);
+  const badge = document.createElement("div"); badge.className = "wr-badge"; badge.textContent = `WR ${n.wr}`;
+  head.appendChild(badge);
+  const title = document.createElement("div"); title.className = "title";
+  title.innerHTML = `<div class="cli">${escapeHtml(n.cliente || "—")}</div><div class="meta">${escapeHtml(n.olo || "—")} • ${escapeHtml(n.indirizzo || n.via || "—")}</div>`;
+  head.appendChild(title);
+  const chev = document.createElement("div"); chev.style.color = "var(--slate-500)"; chev.style.fontSize = "12px"; chev.textContent = n._open ? "▲" : "▼";
+  head.appendChild(chev);
+  head.addEventListener("click", (e) => { if (e.target === cb) return; n._open = !n._open; render(); });
+  card.appendChild(head);
+
+  // Body
+  const body = document.createElement("div"); body.className = "note-body";
+
+  const actions = document.createElement("div"); actions.className = "row"; actions.style.marginBottom = "8px";
+  const btnCopy = mkBtn("📋 Copia nota", "btn-dark", async () => {
+    try { await navigator.clipboard.writeText(currentNoteText()); toast("Nota copiata negli appunti!", "success"); } catch (_) { toast("Copia non riuscita", "error"); }
+  });
+  const btnGmail = mkBtn("✉ Invia tramite Gmail", "btn-primary", () => sendGmail(n));
+  const btnEdit = mkBtn("Modifica campi", "btn-light", () => { n._editFields = !n._editFields; render(); });
+  const btnDel = mkBtn("🗑 Elimina", "btn-danger", async () => {
+    if (!confirm("Eliminare questa nota?")) return;
+    for (const p of n.photos || []) await deletePhoto(p.id);
+    notes = notes.filter(x => x.id !== n.id); selected.delete(n.id); saveNotes(notes); render();
+    toast("Nota eliminata", "success");
+  });
+  btnDel.style.marginLeft = "auto";
+  actions.append(btnCopy, btnGmail, btnEdit, btnDel);
+  body.appendChild(actions);
+
+  const hint = document.createElement("div"); hint.className = "hint";
+  hint.innerHTML = `<strong>Suggerimento:</strong> su mobile "Invia tramite Gmail" apre la condivisione del sistema con PDF e foto già allegati (scegli l'app Gmail). I destinatari vengono copiati negli appunti — incollali nel campo "A:". Su desktop apre Gmail Web e devi allegare i file manualmente.`;
+  body.appendChild(hint);
+
+  // Fields grid
+  if (n._editFields) {
+    const grid = document.createElement("div"); grid.className = "fields-grid"; grid.style.marginTop = "12px";
+    const fields = [
+      ["cliente", "Cliente (D)"], ["olo", "Descrizione OLO"], ["splitter", "Porta uscita splitter PFS (BA_)"],
+      ["via", "VIA (dopo A662_)"], ["pte_est", "PTE-EST"], ["n_porta_perm", "PFS"], ["porta_pte", "PTE"],
+      ["ts", "TS"], ["tc", "TC"], ["d", "D"], ["a", "A"], ["mono", "MONO"], ["internal", "INT"],
+      ["cpe", "CPE"], ["ont_sfp", "ONT / SFP"]
+    ];
+    for (const [k, label] of fields) {
+      const wrap = document.createElement("div"); wrap.className = "field";
+      const l = document.createElement("label"); l.textContent = label;
+      const inp = document.createElement("input"); inp.type = "text"; inp.value = n[k] ?? "";
+      inp.addEventListener("input", () => {
+        n[k] = inp.value;
+        if (!n.note_text_manual) {
+          n.note_text = composeNote(n);
+          const ta = card.querySelector(".note-block");
+          if (ta) ta.value = n.note_text;
+        }
+      });
+      inp.addEventListener("change", () => saveNotes(notes));
+      wrap.append(l, inp); grid.appendChild(wrap);
+    }
+    body.appendChild(grid);
+  }
+
+  // Editable full-note textarea
+  const noteWrap = document.createElement("div"); noteWrap.style.marginTop = "14px";
+  const noteHead = document.createElement("div"); noteHead.className = "row"; noteHead.style.justifyContent = "space-between"; noteHead.style.marginBottom = "6px";
+  const label = document.createElement("div"); label.style.fontSize = "11px"; label.style.color = "var(--slate-500)"; label.style.fontWeight = "600";
+  label.innerHTML = `Nota (modificabile)${n.note_text_manual ? ' <span style="color: var(--pink); margin-left:6px;">• modificata manualmente</span>' : ""}`;
+  const regen = document.createElement("button"); regen.className = "btn btn-light"; regen.style.padding = "5px 10px"; regen.style.fontSize = "11px"; regen.textContent = "↻ Rigenera dai campi";
+  regen.addEventListener("click", () => { n.note_text_manual = false; n.note_text = composeNote(n); saveNotes(notes); toast("Nota rigenerata dai campi", "success"); render(); });
+  noteHead.append(label, regen);
+  noteWrap.appendChild(noteHead);
+  const ta = document.createElement("textarea"); ta.className = "note-block"; ta.spellcheck = false; ta.rows = 8; ta.value = noteText;
+  ta.addEventListener("input", () => { n.note_text = ta.value; n.note_text_manual = true; });
+  ta.addEventListener("change", () => saveNotes(notes));
+  noteWrap.appendChild(ta);
+  body.appendChild(noteWrap);
+
+  // Photos
+  const photosWrap = document.createElement("div"); photosWrap.style.marginTop = "14px";
+  const pHead = document.createElement("div"); pHead.className = "row"; pHead.style.justifyContent = "space-between"; pHead.style.marginBottom = "6px";
+  const pLbl = document.createElement("div"); pLbl.style.fontSize = "13px"; pLbl.style.fontWeight = "600";
+  pLbl.textContent = `📷 Foto (${(n.photos || []).length})`;
+  const pInp = document.createElement("input"); pInp.type = "file"; pInp.accept = "image/*"; pInp.multiple = true; pInp.style.display = "none";
+  const pBtn = document.createElement("button"); pBtn.className = "btn btn-light"; pBtn.style.padding = "5px 10px"; pBtn.style.fontSize = "11px"; pBtn.textContent = "📎 Aggiungi foto";
+  pBtn.addEventListener("click", () => pInp.click());
+  pInp.addEventListener("change", async () => {
+    if (!pInp.files || !pInp.files.length) return;
+    for (const f of pInp.files) {
+      const pid = crypto.randomUUID();
+      await putPhoto(pid, f, f.name);
+      (n.photos = n.photos || []).push({ id: pid, filename: f.name, content_type: f.type });
+    }
+    saveNotes(notes); render(); toast("Foto caricate", "success");
+  });
+  pHead.append(pLbl, pBtn);
+  photosWrap.append(pHead, pInp);
+  const thumbs = document.createElement("div"); thumbs.className = "thumbs";
+  for (const p of n.photos || []) {
+    const box = document.createElement("div"); box.className = "thumb";
+    const img = document.createElement("img"); img.loading = "lazy";
+    getPhoto(p.id).then(rec => { if (rec && rec.blob) img.src = URL.createObjectURL(rec.blob); });
+    const rm = document.createElement("button"); rm.textContent = "×";
+    rm.addEventListener("click", async () => {
+      await deletePhoto(p.id); n.photos = (n.photos || []).filter(x => x.id !== p.id); saveNotes(notes); render(); toast("Foto rimossa", "success");
+    });
+    box.append(img, rm); thumbs.appendChild(box);
+  }
+  if (!(n.photos && n.photos.length)) {
+    const noPh = document.createElement("div"); noPh.style.cssText = "border:1px dashed var(--slate-200);border-radius:10px;padding:10px;text-align:center;font-size:11px;color:var(--slate-500);grid-column:1/-1;";
+    noPh.textContent = "Nessuna foto — carica foto specifiche per questa pratica";
+    thumbs.appendChild(noPh);
+  }
+  photosWrap.appendChild(thumbs);
+  body.appendChild(photosWrap);
+
+  card.appendChild(body);
+
+  function currentNoteText() { return ta.value; }
+  return card;
+}
+
+function mkBtn(text, cls, onClick) {
+  const b = document.createElement("button"); b.className = "btn " + cls; b.textContent = text; b.addEventListener("click", onClick); return b;
+}
+function escapeHtml(s) { return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c])); }
+
+// -------- Gmail send (Web Share on mobile + Gmail Web fallback) --------
+async function sendGmail(n) {
+  const noteText = n.note_text_manual ? (n.note_text || composeNote(n)) : composeNote(n);
+  const subject = `WR: ${n.wr}`;
+  const to = RECIPIENTS.join(",");
+  const body = `${noteText}\n\n---\nDestinatari: ${RECIPIENTS.join(", ")}`;
+  try { await navigator.clipboard.writeText(RECIPIENTS.join(", ")); } catch (_) {}
+
+  if (navigator.canShare) {
+    try {
+      const files = [];
+      for (const p of n.photos || []) {
+        const rec = await getPhoto(p.id);
+        if (rec && rec.blob) files.push(new File([rec.blob], rec.filename || `foto_${p.id}.jpg`, { type: rec.blob.type || p.content_type || "image/jpeg" }));
+      }
+      const shareData = { title: subject, text: body, files };
+      if (files.length && navigator.canShare(shareData)) {
+        await navigator.share(shareData);
+        toast("Condivisione aperta — seleziona Gmail, i destinatari sono già copiati", "success");
+        return;
+      } else if (navigator.canShare({ title: subject, text: body })) {
+        // No files — still try text share
+        await navigator.share({ title: subject, text: body });
+        toast("Condivisione aperta — seleziona Gmail, i destinatari sono già copiati", "success");
+        return;
+      }
+    } catch (err) {
+      if (err && err.name === "AbortError") return;
+    }
+  }
+  // Desktop fallback
+  const url = `https://mail.google.com/mail/?view=cm&fs=1&tf=1&to=${encodeURIComponent(to)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(noteText)}`;
+  const a = document.createElement("a"); a.href = url; a.target = "_blank"; a.rel = "noopener noreferrer";
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  toast("Gmail aperto — allega manualmente foto (destinatari copiati)", "info");
+}
+
+// -------- PDF handling --------
+async function handlePdf(file) {
+  if (!file || !file.name.toLowerCase().endsWith(".pdf")) { toast("Seleziona un file PDF", "error"); return; }
+  toast("Analisi PDF in corso…", "info");
+  try {
+    const parsed = await parsePdfFile(file);
+    let created = 0; const skipped = [];
+    for (const item of parsed) {
+      if (!item.is_numeric) { skipped.push(item.wr); continue; }
+      const n = {
+        id: crypto.randomUUID(),
+        wr: item.wr, cliente: item.cliente, olo: item.olo, indirizzo: item.indirizzo,
+        splitter: item.splitter, via: item.via, n_porta_perm: item.n_porta_perm, porta_pte: item.porta_pte,
+        cpe: "", ont_sfp: "",
+        pte_est: "PTE-EST", ts: "TS", tc: "TC", d: "D", a: "A", mono: "MONO", internal: "INT",
+        note_text: "", note_text_manual: false, photos: [],
+        created_at: new Date().toISOString(),
+        _open: true,
+      };
+      n.note_text = composeNote(n);
+      notes.unshift(n); created++;
+    }
+    saveNotes(notes); render();
+    if (created === 0) toast("Nessuna pratica con WR numerico trovata", "error");
+    else toast(`${created} nota/note create`, "success");
+    if (skipped.length) toast(`WR non numerici saltati: ${skipped.join(", ")}`, "info");
+  } catch (e) {
+    console.error(e); toast("Errore nell'analisi del PDF", "error");
+  }
+}
+
+// -------- Wire UI --------
+document.getElementById("pickBtn").addEventListener("click", (e) => { e.stopPropagation(); document.getElementById("pdfInput").click(); });
+document.getElementById("dropzone").addEventListener("click", () => document.getElementById("pdfInput").click());
+document.getElementById("pdfInput").addEventListener("change", (e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) handlePdf(f); });
+const dz = document.getElementById("dropzone");
+["dragover", "dragenter"].forEach(ev => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add("drag"); }));
+["dragleave", "drop"].forEach(ev => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove("drag"); }));
+dz.addEventListener("drop", (e) => { const f = e.dataTransfer.files?.[0]; if (f) handlePdf(f); });
+document.getElementById("searchInput").addEventListener("input", render);
+document.getElementById("selectAll").addEventListener("change", (e) => {
+  const search = document.getElementById("searchInput").value.trim().toLowerCase();
+  const visible = notes.filter(n => !search || (n.wr || "").toLowerCase().includes(search) || (n.cliente || "").toLowerCase().includes(search) || (n.olo || "").toLowerCase().includes(search));
+  if (e.target.checked) visible.forEach(n => selected.add(n.id));
+  else visible.forEach(n => selected.delete(n.id));
+  render();
+});
+document.getElementById("bulkDeleteBtn").addEventListener("click", async () => {
+  if (!selected.size) return;
+  if (!confirm(`Eliminare ${selected.size} nota/note selezionate?`)) return;
+  const toDel = notes.filter(n => selected.has(n.id));
+  for (const n of toDel) for (const p of n.photos || []) await deletePhoto(p.id);
+  notes = notes.filter(n => !selected.has(n.id)); selected.clear(); saveNotes(notes); render();
+  toast("Note eliminate", "success");
+});
+
+// Recipients
+const rl = document.getElementById("recipientsList");
+for (const r of RECIPIENTS) { const s = document.createElement("span"); s.className = "recipient-tag"; s.textContent = r; rl.appendChild(s); }
+
+render();
+</script>
+</body>
+</html>

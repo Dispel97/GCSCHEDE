@@ -487,33 +487,43 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect, onOp
     const to = RECIPIENTS.join(",");
     setSending(true);
     try {
-      // Web Share with files (mobile) — best UX, but recipient auto-populate is not always supported by target app
-      if (navigator.canShare && (note.pdf_storage_path || (note.photos && note.photos.length))) {
+      // Sempre copia i destinatari negli appunti così l'utente può incollarli nel campo "A:"
+      try { await navigator.clipboard.writeText(RECIPIENTS.join(", ")); } catch (_) {}
+
+      // Raccogli i file (PDF + foto) — sempre, così se ci sono file usiamo Web Share
+      const files = [];
+      try {
+        if (note.pdf_storage_path) {
+          const r = await fetch(`${API}/files?path=${encodeURIComponent(note.pdf_storage_path)}`);
+          if (r.ok) { const b = await r.blob(); files.push(new File([b], note.pdf_filename || `pratica_WR_${note.wr}.pdf`, { type: "application/pdf" })); }
+        }
+        for (const p of note.photos || []) {
+          const r = await fetch(`${API}/files?path=${encodeURIComponent(p.storage_path)}`);
+          if (r.ok) { const b = await r.blob(); files.push(new File([b], p.filename || `foto_${p.id}.jpg`, { type: p.content_type || "image/jpeg" })); }
+        }
+      } catch (fe) { console.warn("fetch attachments failed", fe); }
+
+      // Tentativo Web Share con file — su mobile apre lo share sheet, l'utente sceglie Gmail e i file sono già allegati
+      if (files.length && navigator.canShare) {
+        const shareData = { title: subject, text: noteText, files };
         try {
-          const files = [];
-          if (note.pdf_storage_path) {
-            const r = await fetch(`${API}/files?path=${encodeURIComponent(note.pdf_storage_path)}`);
-            if (r.ok) { const b = await r.blob(); files.push(new File([b], note.pdf_filename || `pratica_WR_${note.wr}.pdf`, { type: "application/pdf" })); }
-          }
-          for (const p of note.photos || []) {
-            const r = await fetch(`${API}/files?path=${encodeURIComponent(p.storage_path)}`);
-            if (r.ok) { const b = await r.blob(); files.push(new File([b], p.filename || `foto_${p.id}.jpg`, { type: p.content_type || "image/jpeg" })); }
-          }
-          // Include recipients in URL so if the sharee opens mailto, "to" is populated
-          const mailto = `mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(noteText)}`;
-          const shareData = { title: subject, text: noteText, url: mailto, files };
-          if (files.length && navigator.canShare(shareData)) {
+          if (navigator.canShare(shareData)) {
             await navigator.share(shareData);
-            toast.success("Condivisione aperta — seleziona Gmail");
+            toast.success("Condivisione aperta — scegli Gmail. I destinatari sono negli appunti: incollali nel campo A:");
             setSending(false); return;
           }
-        } catch (err) { if (err && err.name === "AbortError") { setSending(false); return; } }
+        } catch (err) {
+          if (err && err.name === "AbortError") { setSending(false); return; }
+          console.warn("Web Share failed, using Gmail Web fallback", err);
+        }
       }
-      // Fallback: open Gmail Web with recipients+subject+body prefilled
+
+      // Fallback: apri Gmail Web/App compose con destinatari, oggetto, corpo. Foto da allegare manualmente.
       const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&tf=1&to=${encodeURIComponent(to)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(noteText)}`;
       const a = document.createElement("a"); a.href = gmailUrl; a.target = "_blank"; a.rel = "noopener noreferrer";
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      toast.message("Gmail aperto — allega manualmente PDF e foto");
+      if (files.length) toast.message("Gmail aperto. Il tuo browser non supporta l'invio automatico degli allegati — aggiungili manualmente.");
+      else toast.message("Gmail aperto con destinatari e nota. Aggiungi manualmente PDF e foto.");
     } finally { setSending(false); }
   };
 

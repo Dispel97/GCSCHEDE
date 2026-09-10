@@ -553,34 +553,33 @@ async function sendGmail(n) {
   const noteText = n.note_text_manual ? (n.note_text || composeNote(n)) : composeNote(n);
   const subject = `WR: ${n.wr}`;
   const to = RECIPIENTS.join(",");
-  const mailto = `mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(noteText)}`;
+  try { await navigator.clipboard.writeText(RECIPIENTS.join(", ")); } catch (_) {}
 
-  if (navigator.canShare) {
+  // Raccogli i file
+  const files = [];
+  for (const p of n.photos || []) {
+    const rec = await getPhoto(p.id);
+    if (rec && rec.blob) files.push(new File([rec.blob], rec.filename || `foto_${p.id}.jpg`, { type: rec.blob.type || p.content_type || "image/jpeg" }));
+  }
+
+  if (files.length && navigator.canShare) {
+    const shareData = { title: subject, text: noteText, files };
     try {
-      const files = [];
-      for (const p of n.photos || []) {
-        const rec = await getPhoto(p.id);
-        if (rec && rec.blob) files.push(new File([rec.blob], rec.filename || `foto_${p.id}.jpg`, { type: rec.blob.type || p.content_type || "image/jpeg" }));
-      }
-      const shareData = { title: subject, text: noteText, url: mailto, files };
-      if (files.length && navigator.canShare(shareData)) {
+      if (navigator.canShare(shareData)) {
         await navigator.share(shareData);
-        toast("Condivisione aperta — seleziona Gmail", "success");
-        return;
-      } else if (navigator.canShare({ title: subject, text: noteText, url: mailto })) {
-        await navigator.share({ title: subject, text: noteText, url: mailto });
-        toast("Condivisione aperta — seleziona Gmail", "success");
+        toast("Condivisione aperta — scegli Gmail. Destinatari negli appunti: incollali nel campo A:", "success");
         return;
       }
     } catch (err) {
       if (err && err.name === "AbortError") return;
     }
   }
-  // Desktop fallback: Gmail compose URL with recipients+subject+body pre-filled
+  // Fallback: Gmail Web/App con destinatari, oggetto, corpo
   const url = `https://mail.google.com/mail/?view=cm&fs=1&tf=1&to=${encodeURIComponent(to)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(noteText)}`;
   const a = document.createElement("a"); a.href = url; a.target = "_blank"; a.rel = "noopener noreferrer";
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  toast("Gmail aperto con destinatari e nota — allega manualmente le foto", "info");
+  if (files.length) toast("Gmail aperto. Il browser non supporta l'invio automatico degli allegati — aggiungili manualmente.", "info");
+  else toast("Gmail aperto con destinatari e nota. Aggiungi manualmente le foto.", "info");
 }
 
 // -------- PDF handling --------

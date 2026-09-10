@@ -1,0 +1,31 @@
+{
+  "summary": "Iteration 5 — auth + admin approval + JWT-scoped notes + scanner + camera + Gmail-recipients-in-to fix. Backend: 14/14 pytest passing (test_auth_iter5.py) covering admin seed/login, register (pending/duplicate/short-pw), 403 for non-approved login, /auth/me, admin endpoints (pending/users/approve/revoke/delete + cascade), notes 401 without token, cross-user isolation (404 for foreign notes on GET/PATCH/DELETE/photos/regenerate), bulk-delete only deletes caller's ids, PDF parse (4 numeric WRs, 1 alphanumeric skipped, notes carry user_id). Frontend Playwright: auth-card visible on first load, pending user login shows 'Account in attesa di approvazione', registration switches back to login mode, admin login → main content + ADMIN badge + Pannello Admin button, admin modal shows pending users, Approva moves them to approved section, PDF upload creates 4 note cards (defaultOpen), photo-camera input has capture=environment + accept=image/*, photo-gallery input has no capture and accept=image/*, Gmail button opens mail.google.com URL with 5 recipients in to= param and body containing only the note text (no recipients concatenated), scanner-modal opens with scan-target-cpe/ont buttons and closes cleanly (camera fails gracefully in headless without crashing). Standalone offline: /standalone.html first visit shows 'Imposta password' mode, setting a 4+ char password hides overlay and stores hash in localStorage, reload with sessionStorage cleared shows 'Sblocca l\\'app' mode, wrong password → 'Password errata' toast, correct password → 'App sbloccata' + unlock, Gmail URL patterns in source use `to=${encodeURIComponent(to)}` and `body=${encodeURIComponent(noteText)}` with no recipient concatenation.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_auth_iter5.py",
+    "/app/test_reports/pytest/iter5_auth.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py get_current_user rejects approved=false with 403 even when the token is valid — good, but note admin approval revocation only takes effect on next request (existing JWTs remain live until 30d expiry). Consider a token-invalidation list or shorter expiry + refresh flow if security is critical.",
+    "seed_admin() force-updates the admin's password on every startup if it differs from .env — this is fine but means changing ADMIN_PASSWORD in .env immediately overwrites. Documented in test_credentials.md.",
+    "CORS is allow_origins='*' with allow_credentials=True which browsers reject; harmless for the current Bearer-token flow (no cookies), but should be tightened for production.",
+    "App.js NoteCard defaults defaultOpen for newly-parsed notes → all 4 cards auto-expand after upload. Minor UX consideration for lots of notes.",
+    "standalone.html toast placement (top-right) can overlap the header 'Blocca' button briefly; cosmetic only."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_auth_iter5.py (new)"
+  ],
+  "success_rate": { "backend": "100%", "frontend": "100%" },
+  "test_credentials": "Admin (seeded): giuseppe97belviso@gmail.com / Mucchetta4! (from backend/.env). Test users created dynamically with TEST_/test_ email prefix and cleaned up via DELETE /api/auth/admin/users/{id} at end of each run.",
+  "seed_data_creation": "Backend pytest fixtures registered ~4 transient users (user_a, user_b, register_pending, cascade user) and cleaned them all via admin delete. Frontend test flow registered 1-2 pending users and approved/cleaned them; admin's transient notes from PDF upload were bulk-deleted at end.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 5 fully passed. Regression suite: /app/backend/tests/test_auth_iter5.py (14 tests) + previous test_owner_isolation.py/test_bulk_delete.py/test_files_endpoint.py (note: latter three may be outdated since /api/notes now requires Bearer JWT instead of X-Owner-Key header — verify before running). Admin credentials in backend/.env: ADMIN_EMAIL/ADMIN_PASSWORD; JWT_SECRET must be set. All /api/notes/* and /api/pdf/parse require Authorization: Bearer <token>. Emails are lowercased at register+login. Data-testids of interest: auth-card, input-name/email/password, btn-login/register, switch-login/register, btn-admin-panel, admin-modal, pending-<email> / approve-<email> / reject-<email>, approved-section, upload-pdf-input, note-toggle-<wr>, photo-camera-<wr>/photo-gallery-<wr> (raw inputs), photo-camera-button-<wr>/photo-gallery-button-<wr> (buttons), scan-serial-<wr>, scanner-modal, scan-target-cpe/ont, close-scanner, send-gmail-button-<wr>, copy-note-button-<wr>. Standalone lock elements: #lockScreen, #lockTitle, #lockPass, #lockPass2, #lockForm.",
+  "rca of the issue": "N/A — no defects found."
+}

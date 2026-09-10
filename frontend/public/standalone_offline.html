@@ -96,6 +96,31 @@
 <body>
 <div class="toast-host" id="toastHost"></div>
 
+<!-- Password lock overlay -->
+<div id="lockScreen" style="display:none; position:fixed; inset:0; z-index:2000; background:linear-gradient(180deg,#F8FAFC,#F1F5F9); align-items:center; justify-content:center; padding:20px;">
+  <div class="card" style="max-width:420px; width:100%; padding:26px;">
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:16px;">
+      <img src="https://customer-assets-jai6qajn.emergentagent.net/job_ccf322e9-af2b-47ac-bdda-c765aa29fe4c/artifacts/26fm2fx6_1682096608045.jpeg" style="height:36px; border-radius:5px;">
+      <div style="width:1px; height:26px; background: var(--slate-200);"></div>
+      <img src="https://customer-assets-jai6qajn.emergentagent.net/job_ccf322e9-af2b-47ac-bdda-c765aa29fe4c/artifacts/hfc42618_Open_Fiber_logo.svg.png" style="height:26px;">
+    </div>
+    <h2 id="lockTitle" style="margin:0 0 6px; font-family:'Outfit',sans-serif; font-size:22px; letter-spacing:-0.01em;">🔒 Sblocca l'app</h2>
+    <p id="lockSubtitle" style="margin:0 0 18px; color:var(--slate-500); font-size:13.5px; line-height:1.5;">Inserisci la tua password locale per accedere</p>
+    <form id="lockForm" style="display:grid; gap:10px;">
+      <label style="font-size:12px; font-weight:600; color:var(--slate-500);">Password
+        <input id="lockPass" type="password" required autocomplete="current-password" style="margin-top:4px;">
+      </label>
+      <label id="lockPass2Wrap" style="font-size:12px; font-weight:600; color:var(--slate-500); display:none;">Conferma password
+        <input id="lockPass2" type="password" autocomplete="new-password" style="margin-top:4px;">
+      </label>
+      <button type="submit" class="btn btn-primary" style="width:100%; justify-content:center; padding:12px; font-size:14px;">
+        <span id="lockBtnLbl">Sblocca</span>
+      </button>
+      <button type="button" id="lockReset" style="display:none; background:none; border:0; color:var(--red); font-size:11px; cursor:pointer; margin-top:4px;">Ho dimenticato la password (cancella tutto)</button>
+    </form>
+  </div>
+</div>
+
 <header class="app">
   <div class="inner">
     <img class="gc" src="https://customer-assets-jai6qajn.emergentagent.net/job_ccf322e9-af2b-47ac-bdda-c765aa29fe4c/artifacts/26fm2fx6_1682096608045.jpeg" alt="GC Impianti SNC">
@@ -482,20 +507,27 @@ function renderCard(n) {
   const pHead = document.createElement("div"); pHead.className = "row"; pHead.style.justifyContent = "space-between"; pHead.style.marginBottom = "6px";
   const pLbl = document.createElement("div"); pLbl.style.fontSize = "13px"; pLbl.style.fontWeight = "600";
   pLbl.textContent = `📷 Foto (${(n.photos || []).length})`;
-  const pInp = document.createElement("input"); pInp.type = "file"; pInp.accept = "image/*"; pInp.multiple = true; pInp.style.display = "none";
-  const pBtn = document.createElement("button"); pBtn.className = "btn btn-light"; pBtn.style.padding = "5px 10px"; pBtn.style.fontSize = "11px"; pBtn.textContent = "📎 Aggiungi foto";
-  pBtn.addEventListener("click", () => pInp.click());
-  pInp.addEventListener("change", async () => {
-    if (!pInp.files || !pInp.files.length) return;
-    for (const f of pInp.files) {
+  const camInp = document.createElement("input"); camInp.type = "file"; camInp.accept = "image/*"; camInp.setAttribute("capture", "environment"); camInp.style.display = "none";
+  const galInp = document.createElement("input"); galInp.type = "file"; galInp.accept = "image/*"; galInp.multiple = true; galInp.style.display = "none";
+  const camBtn = document.createElement("button"); camBtn.className = "btn btn-dark"; camBtn.style.padding = "5px 10px"; camBtn.style.fontSize = "11px"; camBtn.textContent = "📸 Scatta foto";
+  camBtn.addEventListener("click", () => camInp.click());
+  const galBtn = document.createElement("button"); galBtn.className = "btn btn-light"; galBtn.style.padding = "5px 10px"; galBtn.style.fontSize = "11px"; galBtn.textContent = "🖼 Galleria";
+  galBtn.addEventListener("click", () => galInp.click());
+  const uploadFiles = async (files) => {
+    if (!files || !files.length) return;
+    for (const f of files) {
       const pid = crypto.randomUUID();
       await putPhoto(pid, f, f.name);
       (n.photos = n.photos || []).push({ id: pid, filename: f.name, content_type: f.type });
     }
     saveNotes(notes); render(); toast("Foto caricate", "success");
-  });
-  pHead.append(pLbl, pBtn);
-  photosWrap.append(pHead, pInp);
+  };
+  camInp.addEventListener("change", () => uploadFiles(camInp.files));
+  galInp.addEventListener("change", () => uploadFiles(galInp.files));
+  const pBtns = document.createElement("div"); pBtns.className = "row"; pBtns.style.gap = "6px";
+  pBtns.append(camBtn, galBtn);
+  pHead.append(pLbl, pBtns);
+  photosWrap.append(pHead, camInp, galInp);
   const thumbs = document.createElement("div"); thumbs.className = "thumbs";
   for (const p of n.photos || []) {
     const box = document.createElement("div"); box.className = "thumb";
@@ -531,8 +563,7 @@ async function sendGmail(n) {
   const noteText = n.note_text_manual ? (n.note_text || composeNote(n)) : composeNote(n);
   const subject = `WR: ${n.wr}`;
   const to = RECIPIENTS.join(",");
-  const body = `${noteText}\n\n---\nDestinatari: ${RECIPIENTS.join(", ")}`;
-  try { await navigator.clipboard.writeText(RECIPIENTS.join(", ")); } catch (_) {}
+  const mailto = `mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(noteText)}`;
 
   if (navigator.canShare) {
     try {
@@ -541,26 +572,25 @@ async function sendGmail(n) {
         const rec = await getPhoto(p.id);
         if (rec && rec.blob) files.push(new File([rec.blob], rec.filename || `foto_${p.id}.jpg`, { type: rec.blob.type || p.content_type || "image/jpeg" }));
       }
-      const shareData = { title: subject, text: body, files };
+      const shareData = { title: subject, text: noteText, url: mailto, files };
       if (files.length && navigator.canShare(shareData)) {
         await navigator.share(shareData);
-        toast("Condivisione aperta — seleziona Gmail, i destinatari sono già copiati", "success");
+        toast("Condivisione aperta — seleziona Gmail", "success");
         return;
-      } else if (navigator.canShare({ title: subject, text: body })) {
-        // No files — still try text share
-        await navigator.share({ title: subject, text: body });
-        toast("Condivisione aperta — seleziona Gmail, i destinatari sono già copiati", "success");
+      } else if (navigator.canShare({ title: subject, text: noteText, url: mailto })) {
+        await navigator.share({ title: subject, text: noteText, url: mailto });
+        toast("Condivisione aperta — seleziona Gmail", "success");
         return;
       }
     } catch (err) {
       if (err && err.name === "AbortError") return;
     }
   }
-  // Desktop fallback
+  // Desktop fallback: Gmail compose URL with recipients+subject+body pre-filled
   const url = `https://mail.google.com/mail/?view=cm&fs=1&tf=1&to=${encodeURIComponent(to)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(noteText)}`;
   const a = document.createElement("a"); a.href = url; a.target = "_blank"; a.rel = "noopener noreferrer";
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  toast("Gmail aperto — allega manualmente foto (destinatari copiati)", "info");
+  toast("Gmail aperto con destinatari e nota — allega manualmente le foto", "info");
 }
 
 // -------- PDF handling --------
@@ -622,6 +652,96 @@ document.getElementById("bulkDeleteBtn").addEventListener("click", async () => {
 // Recipients
 const rl = document.getElementById("recipientsList");
 for (const r of RECIPIENTS) { const s = document.createElement("span"); s.className = "recipient-tag"; s.textContent = r; rl.appendChild(s); }
+
+// -------- Local password lock --------
+async function sha256Hex(str) {
+  const bytes = new TextEncoder().encode(str);
+  const buf = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+const LOCK_KEY = "gc_lock_hash_v1";
+const LOCK_SESSION_KEY = "gc_lock_session";
+function isLocked() {
+  const hash = localStorage.getItem(LOCK_KEY);
+  if (!hash) return false;
+  return sessionStorage.getItem(LOCK_SESSION_KEY) !== "1";
+}
+async function setupLock() {
+  const lockScreen = document.getElementById("lockScreen");
+  const hasPass = !!localStorage.getItem(LOCK_KEY);
+  const title = document.getElementById("lockTitle");
+  const subtitle = document.getElementById("lockSubtitle");
+  const btnLbl = document.getElementById("lockBtnLbl");
+  const pass2Wrap = document.getElementById("lockPass2Wrap");
+  const resetBtn = document.getElementById("lockReset");
+  const form = document.getElementById("lockForm");
+  if (!hasPass) {
+    title.textContent = "🔐 Imposta password";
+    subtitle.textContent = "Proteggi l'app con una password locale (min 4 caratteri). Non potrà essere recuperata: se la dimentichi devi cancellare tutti i dati.";
+    btnLbl.textContent = "Imposta";
+    pass2Wrap.style.display = "block";
+    document.getElementById("lockPass2").required = true;
+    resetBtn.style.display = "none";
+    lockScreen.style.display = "flex";
+    document.body.style.overflow = "hidden";
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const p1 = document.getElementById("lockPass").value;
+      const p2 = document.getElementById("lockPass2").value;
+      if (p1.length < 4) return toast("Password troppo corta (min 4 caratteri)", "error");
+      if (p1 !== p2) return toast("Le due password non coincidono", "error");
+      const h = await sha256Hex(p1);
+      localStorage.setItem(LOCK_KEY, h);
+      sessionStorage.setItem(LOCK_SESSION_KEY, "1");
+      lockScreen.style.display = "none"; document.body.style.overflow = "";
+      toast("Password impostata", "success");
+    };
+  } else if (isLocked()) {
+    title.textContent = "🔒 Sblocca l'app";
+    subtitle.textContent = "Inserisci la tua password locale per accedere";
+    btnLbl.textContent = "Sblocca";
+    pass2Wrap.style.display = "none";
+    document.getElementById("lockPass2").required = false;
+    resetBtn.style.display = "block";
+    lockScreen.style.display = "flex";
+    document.body.style.overflow = "hidden";
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const p1 = document.getElementById("lockPass").value;
+      const h = await sha256Hex(p1);
+      if (h !== localStorage.getItem(LOCK_KEY)) return toast("Password errata", "error");
+      sessionStorage.setItem(LOCK_SESSION_KEY, "1");
+      lockScreen.style.display = "none"; document.body.style.overflow = "";
+      document.getElementById("lockPass").value = "";
+      toast("App sbloccata", "success");
+    };
+    resetBtn.onclick = () => {
+      if (!confirm("Vuoi cancellare TUTTI i dati (password, note, foto)? Non è reversibile.")) return;
+      localStorage.clear(); sessionStorage.clear();
+      indexedDB.deleteDatabase(DB_NAME);
+      location.reload();
+    };
+  }
+}
+setupLock();
+
+// "Blocca app" button in header
+(function addLockButton() {
+  const inner = document.querySelector("header.app .inner");
+  if (!inner) return;
+  const btn = document.createElement("button");
+  btn.className = "btn btn-light";
+  btn.style.padding = "6px 12px"; btn.style.fontSize = "12px"; btn.style.marginLeft = "8px";
+  btn.textContent = "🔒 Blocca";
+  btn.title = "Blocca l'app";
+  btn.addEventListener("click", () => {
+    if (!localStorage.getItem(LOCK_KEY)) return toast("Nessuna password impostata", "info");
+    sessionStorage.removeItem(LOCK_SESSION_KEY);
+    setupLock();
+  });
+  const title = inner.querySelector(".title");
+  inner.insertBefore(btn, title || null);
+})();
 
 render();
 </script>

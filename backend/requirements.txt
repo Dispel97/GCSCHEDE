@@ -12,3 +12,4 @@ pillow
 requests
 httpx
 boto3
+PyJWT

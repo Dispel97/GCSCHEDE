@@ -27,6 +27,11 @@ Web app che automatizza la generazione delle note tecniche OpenFiber a partire d
 - Note status espletato/sospeso (era singolo toggle)
 - File offline standalone HTML per Android
 
+### Iteration 12 (11 Feb 2026)
+- **PWA installabile**: creato `/downloads/pwa/` con `manifest.json`, service worker (`sw.js`), 6 icone PNG (48/96/180/192/512 + maskable). L'offline HTML esistente è wrappato in una PWA con "Aggiungi alla schermata Home" (icona rosa GC Impianti). Zip pronto: `gc-impianti-pwa.zip` (852 KB). Istruzioni PWABuilder.com per convertirlo in APK reale firmato.
+- **Cloudflare R2 storage (fallback trasparente)**: backend aggiornato con `boto3`; se env vars `R2_ENDPOINT/R2_BUCKET/R2_ACCESS_KEY/R2_SECRET_KEY` sono presenti, usa R2 (S3-compatibile); altrimenti fallback su Emergent Object Storage. Nessuna modifica al codice, solo env vars.
+- **Statistiche per Tag**: endpoint `GET /api/inventory/stats` con aggregazione per tag; nuova sezione "Ripartizione magazzino" con barra colorata a 3 segmenti (in_stock/assegnato/scaricato) per tag, click-to-filter integrato.
+
 ### Iteration 11 (11 Feb 2026)
 - **Tag magazzino liberi**: sostituito il dropdown fisso CPE/ONT/ALTRO con un **input free-form** con autocompletamento (`<datalist>`) basato sui tag già usati. Nuovo endpoint `GET /api/inventory/tags`.
 - **Modifica tag inline**: nella tabella magazzino ogni riga mostra un **chip cliccabile** — al click diventa un input con Enter=salva, Esc=annulla. Chip vuoto = "+ tag".

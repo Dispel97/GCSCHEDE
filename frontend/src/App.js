@@ -1222,6 +1222,7 @@ function WarehousePage({ onOpenAdmin, showAdminBtn }) {
   const [serials, setSerials] = useState([]);
   const [users, setUsers] = useState([]);
   const [tags, setTags] = useState([]);
+  const [tagStats, setTagStats] = useState({ total: 0, by_tag: [] });
   const [filter, setFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [tipoFilter, setTipoFilter] = useState("");
@@ -1245,6 +1246,7 @@ function WarehousePage({ onOpenAdmin, showAdminBtn }) {
 
   const fetchTags = useCallback(async () => {
     try { const r = await axios.get(`${API}/inventory/tags`); setTags(r.data.tags || []); } catch (_) {}
+    try { const r = await axios.get(`${API}/inventory/stats`); setTagStats(r.data || { total: 0, by_tag: [] }); } catch (_) {}
   }, []);
 
   useEffect(() => { const t = setTimeout(fetchSerials, 200); return () => clearTimeout(t); }, [fetchSerials]);
@@ -1352,6 +1354,54 @@ function WarehousePage({ onOpenAdmin, showAdminBtn }) {
         <div className="rounded-xl bg-white border border-slate-200 p-3"><div className="text-[11px] text-slate-500 font-semibold">Assegnati</div><div className="text-2xl font-display font-extrabold text-amber-600">{stats.assegnato}</div></div>
         <div className="rounded-xl bg-white border border-slate-200 p-3"><div className="text-[11px] text-slate-500 font-semibold">Scaricati</div><div className="text-2xl font-display font-extrabold text-slate-500">{stats.scaricato}</div></div>
       </section>
+
+      {tagStats.by_tag.length > 0 && (
+        <section className="bg-white border border-slate-200 rounded-2xl card-shadow p-4 sm:p-5" data-testid="warehouse-tag-stats">
+          <div className="flex items-center gap-2 mb-3">
+            <div>
+              <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Statistiche per Tag</div>
+              <h2 className="text-lg font-display font-bold mt-0.5">Ripartizione magazzino</h2>
+            </div>
+            <div className="ml-auto text-[11px] text-slate-500">{tagStats.by_tag.length} tag distinti · {tagStats.total} seriali</div>
+          </div>
+          <div className="space-y-2.5">
+            {tagStats.by_tag.map((row) => {
+              const max = Math.max(...tagStats.by_tag.map((x) => x.total));
+              const pct = max ? (row.total / max) * 100 : 0;
+              const inPct = row.total ? (row.in_stock / row.total) * 100 : 0;
+              const asPct = row.total ? (row.assegnato / row.total) * 100 : 0;
+              const dwPct = row.total ? (row.scaricato / row.total) * 100 : 0;
+              return (
+                <button key={row.tag || "__empty__"} onClick={() => setTipoFilter(row.tag)}
+                  className={`w-full text-left rounded-xl border transition p-3 hover:border-brand-pink hover:bg-pink-50/40 ${tipoFilter === row.tag ? "border-brand-pink bg-pink-50" : "border-slate-200"}`}
+                  data-testid={`tag-stat-${row.tag || "empty"}`} title="Clicca per filtrare la lista">
+                  <div className="flex items-center gap-2">
+                    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ${row.tag ? "bg-pink-100 text-pink-800" : "bg-slate-100 text-slate-400 italic"}`}>
+                      {row.tag || "— senza tag —"}
+                    </span>
+                    <span className="text-lg font-display font-extrabold text-slate-900 ml-auto">{row.total}</span>
+                  </div>
+                  <div className="mt-2 h-2.5 bg-slate-100 rounded-full overflow-hidden relative" style={{ width: `${Math.max(pct, 8)}%`, minWidth: 60 }}>
+                    <div className="absolute inset-y-0 left-0 bg-emerald-400" style={{ width: `${inPct}%` }} />
+                    <div className="absolute inset-y-0 bg-amber-400" style={{ left: `${inPct}%`, width: `${asPct}%` }} />
+                    <div className="absolute inset-y-0 bg-slate-400" style={{ left: `${inPct + asPct}%`, width: `${dwPct}%` }} />
+                  </div>
+                  <div className="flex gap-3 mt-1.5 text-[11px] text-slate-600">
+                    <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-400"></span> {row.in_stock} in stock</span>
+                    <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400"></span> {row.assegnato} assegnati</span>
+                    <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-slate-400"></span> {row.scaricato} scaricati</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          {tipoFilter && (
+            <button onClick={() => setTipoFilter("")} className="mt-3 text-[11px] font-semibold text-slate-600 hover:text-slate-900 inline-flex items-center gap-1" data-testid="clear-tag-filter">
+              <X size={12} /> Rimuovi filtro tag "{tipoFilter}"
+            </button>
+          )}
+        </section>
+      )}
 
       <section className="bg-white border border-slate-200 rounded-2xl card-shadow p-4 sm:p-5" data-testid="warehouse-list">
         <div className="flex flex-wrap items-center gap-2 mb-3">

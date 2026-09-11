@@ -81,16 +81,43 @@ async def get_current_admin(user: dict = Depends(get_current_user)) -> dict:
     return user
 
 
-# ---------- Object Storage ----------
+# ---------- Object Storage (Emergent OR Cloudflare R2 / S3-compatible) ----------
 STORAGE_BASE = (os.environ.get("INTEGRATION_PROXY_URL") or "").strip() or "https://integrations.emergentagent.com"
 STORAGE_URL = STORAGE_BASE.rstrip("/") + "/objstore/api/v1/storage"
 EMERGENT_KEY = os.environ.get("EMERGENT_LLM_KEY")
 APP_NAME = "openfiber-notes"
 storage_key = None
 
+# --- Cloudflare R2 / S3-compatible config ---
+R2_ENDPOINT = (os.environ.get("R2_ENDPOINT") or "").strip()
+R2_BUCKET = (os.environ.get("R2_BUCKET") or "").strip()
+R2_ACCESS_KEY = (os.environ.get("R2_ACCESS_KEY") or "").strip()
+R2_SECRET_KEY = (os.environ.get("R2_SECRET_KEY") or "").strip()
+R2_REGION = (os.environ.get("R2_REGION") or "auto").strip()
+USE_R2 = bool(R2_ENDPOINT and R2_BUCKET and R2_ACCESS_KEY and R2_SECRET_KEY)
+_r2_client = None
+
+
+def _get_r2_client():
+    global _r2_client
+    if _r2_client is None:
+        import boto3
+        from botocore.config import Config
+        _r2_client = boto3.client(
+            "s3",
+            endpoint_url=R2_ENDPOINT,
+            aws_access_key_id=R2_ACCESS_KEY,
+            aws_secret_access_key=R2_SECRET_KEY,
+            region_name=R2_REGION,
+            config=Config(signature_version="s3v4", retries={"max_attempts": 3}),
+        )
+    return _r2_client
+
 
 def init_storage(force: bool = False):
     global storage_key
+    if USE_R2:
+        return "r2"
     if storage_key and not force:
         return storage_key
     resp = requests.post(f"{STORAGE_URL}/init", json={"emergent_key": EMERGENT_KEY}, timeout=30)
@@ -100,6 +127,15 @@ def init_storage(force: bool = False):
 
 
 def put_object(path: str, data: bytes, content_type: str) -> dict:
+    if USE_R2:
+        try:
+            _get_r2_client().put_object(
+                Bucket=R2_BUCKET, Key=path, Body=data, ContentType=content_type
+            )
+            return {"path": path, "backend": "r2"}
+        except Exception as e:
+            logger.exception(f"R2 put failed: {e}")
+            raise
     key = init_storage()
     resp = requests.put(f"{STORAGE_URL}/objects/{path}",
                         headers={"X-Storage-Key": key, "Content-Type": content_type},
@@ -114,6 +150,13 @@ def put_object(path: str, data: bytes, content_type: str) -> dict:
 
 
 def get_object(path: str):
+    if USE_R2:
+        try:
+            r = _get_r2_client().get_object(Bucket=R2_BUCKET, Key=path)
+            return r["Body"].read(), r.get("ContentType", "application/octet-stream")
+        except Exception as e:
+            logger.exception(f"R2 get failed: {e}")
+            raise
     key = init_storage()
     resp = requests.get(f"{STORAGE_URL}/objects/{path}", headers={"X-Storage-Key": key}, timeout=60)
     if resp.status_code == 404:
@@ -766,6 +809,31 @@ async def list_tags(user: dict = Depends(get_magazzino_or_admin)):
     return {"tags": tags}
 
 
+@api_router.get("/inventory/stats")
+async def inventory_stats(user: dict = Depends(get_magazzino_or_admin)):
+    pipeline = [
+        {"$group": {
+            "_id": {"$ifNull": ["$tipo", ""]},
+            "total": {"$sum": 1},
+            "in_stock": {"$sum": {"$cond": [{"$eq": ["$status", "in_stock"]}, 1, 0]}},
+            "assegnato": {"$sum": {"$cond": [{"$eq": ["$status", "assegnato"]}, 1, 0]}},
+            "scaricato": {"$sum": {"$cond": [{"$eq": ["$status", "scaricato"]}, 1, 0]}},
+        }},
+        {"$sort": {"total": -1}},
+    ]
+    by_tag = []
+    async for row in db.serials.aggregate(pipeline):
+        by_tag.append({
+            "tag": row["_id"] or "",
+            "total": row["total"],
+            "in_stock": row["in_stock"],
+            "assegnato": row["assegnato"],
+            "scaricato": row["scaricato"],
+        })
+    total = sum(x["total"] for x in by_tag)
+    return {"total": total, "by_tag": by_tag}
+
+
 @api_router.get("/inventory/export.csv")
 async def export_inventory_csv(user: dict = Depends(get_magazzino_or_admin)):
     docs = await db.serials.find({}, {"_id": 0}).sort("created_at", -1).to_list(5000)
@@ -913,7 +981,7 @@ async def seed_admin():
 async def startup():
     try:
         init_storage()
-        logger.info("Storage initialized")
+        logger.info(f"Storage initialized (backend={'R2' if USE_R2 else 'Emergent'})")
     except Exception as e:
         logger.error(f"Storage init failed: {e}")
     try:

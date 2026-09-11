@@ -303,23 +303,31 @@ Nome DB: `test_database` (personalizzabile via `DB_NAME`)
 
 ## 8) File Storage
 
-L'app attualmente usa **Emergent Object Storage** per PDF e foto (path salvato in `pdf_storage_path` / `photos[]`).
+L'app supporta **due backend** di storage in modo trasparente:
 
-**Migrazione file**: quando esci da Emergent devi sostituire con:
-- **S3-compatible** (AWS S3, Cloudflare R2, MinIO, DigitalOcean Spaces)
-- **Local disk** con volume persistente
-- **Google Cloud Storage** / **Azure Blob**
+### A) Emergent Object Storage (default in Emergent)
+Nessuna configurazione richiesta se `EMERGENT_LLM_KEY` è impostato. Funziona solo dentro Emergent.
 
-Modifica in `backend/server.py` la sezione `# Object Storage`:
-- Sostituisci le chiamate `emergent_storage.upload_file()` con `boto3` (S3), `google-cloud-storage`, oppure salvataggio locale in `/var/data/uploads/`
-- Aggiungi endpoint statico (o CloudFront/CDN) per servire i file al frontend
+### B) Cloudflare R2 / S3-compatible (raccomandato per migrazione)
+Basta impostare 4 env variables e il backend passa automaticamente a R2. Nessuna modifica al codice.
 
-**Esempio S3 con boto3**:
-```python
-import boto3
-s3 = boto3.client("s3", aws_access_key_id=..., aws_secret_access_key=...)
-s3.upload_fileobj(file.file, "my-bucket", f"pdfs/{note_id}/{filename}")
+```env
+R2_ENDPOINT=https://<account_id>.r2.cloudflarestorage.com
+R2_BUCKET=gc-impianti-files
+R2_ACCESS_KEY=<access_key>
+R2_SECRET_KEY=<secret_key>
+R2_REGION=auto
 ```
+
+**Come ottenere le credenziali R2**:
+1. Cloudflare Dashboard → **R2 Object Storage** → **Create bucket** (nome es. `gc-impianti-files`)
+2. **R2 → Manage R2 API Tokens** → **Create API Token** → permessi **Object Read & Write** su quel bucket
+3. Copia `Access Key ID` + `Secret Access Key` (mostrati una sola volta!)
+4. L'`Endpoint` è mostrato nella pagina del bucket: `https://<account_id>.r2.cloudflarestorage.com`
+
+Il backend rileva automaticamente la presenza di queste variabili e usa R2. Se assenti, ricade su Emergent.
+
+**Piano gratuito Cloudflare R2**: 10 GB storage + 10M richieste classe A + 1M classe B al mese.
 
 ---
 

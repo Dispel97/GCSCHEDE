@@ -5,6 +5,7 @@ import {
   Upload, FileText, Copy, Mail, Trash2, Image as ImageIcon,
   Loader2, Search, ChevronDown, ChevronUp, Save, X, Camera, RotateCcw,
   LogOut, Shield, UserCheck, UserX, Users, ScanLine, LogIn, UserPlus,
+  Package, RefreshCw, Calendar, CheckCircle2, PauseCircle, Warehouse,
 } from "lucide-react";
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from "html5-qrcode";
 
@@ -72,7 +73,7 @@ function AuthProvider({ children }) {
 const useAuth = () => useContext(AuthCtx);
 
 // ---------- Header ----------
-function Header({ onAdmin, showAdminBtn }) {
+function Header({ onAdmin, showAdminBtn, page, onPageChange, canSwitchPage }) {
   const { user, logout } = useAuth();
   return (
     <header className="bg-white border-b border-slate-200" data-testid="header-admin-bar">
@@ -84,22 +85,37 @@ function Header({ onAdmin, showAdminBtn }) {
         </div>
         <div className="ml-auto text-right">
           <h1 className="text-lg sm:text-xl font-display font-extrabold tracking-tight text-slate-900" data-testid="app-title">
-            Gestione Pratiche & Note
+            {page === "warehouse" ? "Magazzino Modem" : "Gestione Pratiche & Note"}
           </h1>
           <p className="text-xs sm:text-[13px] text-slate-500 font-medium">
             creato e amministrato da <span className="text-slate-800 font-semibold">Giuseppe Belviso</span>
           </p>
         </div>
         {user && (
-          <div className="w-full flex items-center gap-2 pt-2 border-t border-slate-100" data-testid="user-bar">
+          <div className="w-full flex items-center gap-2 pt-2 border-t border-slate-100 flex-wrap" data-testid="user-bar">
             <div className="text-xs text-slate-600 truncate">
               <span className="font-semibold text-slate-800">{user.email}</span>
               {user.role === "admin" && <span className="ml-2 inline-flex items-center gap-1 text-[10px] font-bold text-brand-pink brand-pink"><Shield size={10} /> ADMIN</span>}
+              {user.role === "magazzino" && <span className="ml-2 inline-flex items-center gap-1 text-[10px] font-bold text-slate-800 bg-slate-100 px-1.5 py-0.5 rounded"><Warehouse size={10} /> MAGAZZINO</span>}
             </div>
-            <div className="ml-auto flex gap-2">
+            {canSwitchPage && (
+              <div className="ml-auto flex gap-1 bg-slate-100 rounded-full p-1" data-testid="page-switcher">
+                <button onClick={() => onPageChange("notes")}
+                  className={`px-3 py-1 rounded-full text-xs font-semibold inline-flex items-center gap-1 transition ${page === "notes" ? "bg-white text-slate-900 shadow" : "text-slate-500 hover:text-slate-800"}`}
+                  data-testid="nav-notes">
+                  <FileText size={12} /> Note
+                </button>
+                <button onClick={() => onPageChange("warehouse")}
+                  className={`px-3 py-1 rounded-full text-xs font-semibold inline-flex items-center gap-1 transition ${page === "warehouse" ? "bg-white text-slate-900 shadow" : "text-slate-500 hover:text-slate-800"}`}
+                  data-testid="nav-warehouse">
+                  <Warehouse size={12} /> Magazzino
+                </button>
+              </div>
+            )}
+            <div className={`${canSwitchPage ? "" : "ml-auto"} flex gap-2`}>
               {showAdminBtn && (
                 <button onClick={onAdmin} className="btn-ghost text-xs font-semibold text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-full px-3 py-1.5 inline-flex items-center gap-1" data-testid="btn-admin-panel">
-                  <Users size={14} /> Pannello Admin
+                  <Users size={14} /> Admin
                 </button>
               )}
               <button onClick={logout} className="btn-ghost text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 rounded-full px-3 py-1.5 inline-flex items-center gap-1" data-testid="btn-logout">
@@ -205,7 +221,8 @@ function AdminPanel({ onClose }) {
   };
   useEffect(() => { fetchUsers(); }, []);
 
-  const approve = async (id) => { try { await axios.post(`${API}/auth/admin/approve/${id}`); toast.success("Utente approvato"); fetchUsers(); } catch (e) { toast.error(errorText(e)); } };
+  const approve = async (id, role) => { try { await axios.post(`${API}/auth/admin/approve/${id}`, { role }); toast.success(`Utente approvato come ${role === "magazzino" ? "Magazzino" : "Tecnico"}`); fetchUsers(); } catch (e) { toast.error(errorText(e)); } };
+  const setRole = async (id, role) => { try { await axios.post(`${API}/auth/admin/set-role/${id}`, { role }); toast.success("Ruolo aggiornato"); fetchUsers(); } catch (e) { toast.error(errorText(e)); } };
   const revoke = async (id) => { try { await axios.post(`${API}/auth/admin/revoke/${id}`); toast.success("Approvazione revocata"); fetchUsers(); } catch (e) { toast.error(errorText(e)); } };
   const del = async (id, email) => {
     if (!window.confirm(`Eliminare definitivamente ${email} e tutte le sue note?`)) return;
@@ -237,7 +254,8 @@ function AdminPanel({ onClose }) {
                       <div className="text-sm font-semibold text-slate-900 truncate">{u.email}</div>
                       <div className="text-xs text-slate-500">{u.name || "—"} • {new Date(u.created_at).toLocaleString("it-IT")}</div>
                     </div>
-                    <button onClick={() => approve(u.id)} className="btn-primary rounded-full px-3 py-1.5 text-xs font-semibold inline-flex items-center gap-1" data-testid={`approve-${u.email}`}><UserCheck size={12} /> Approva</button>
+                    <button onClick={() => approve(u.id, "user")} className="btn-primary rounded-full px-3 py-1.5 text-xs font-semibold inline-flex items-center gap-1" data-testid={`approve-user-${u.email}`}><UserCheck size={12} /> Tecnico</button>
+                    <button onClick={() => approve(u.id, "magazzino")} className="rounded-full px-3 py-1.5 text-xs font-semibold bg-slate-900 text-white inline-flex items-center gap-1 hover:bg-slate-800" data-testid={`approve-magazzino-${u.email}`}><Warehouse size={12} /> Magazzino</button>
                     <button onClick={() => del(u.id, u.email)} className="btn-ghost rounded-full px-3 py-1.5 text-xs font-semibold bg-red-50 text-red-600 hover:bg-red-100 inline-flex items-center gap-1" data-testid={`reject-${u.email}`}><UserX size={12} /> Rifiuta</button>
                   </div>
                 ))}
@@ -251,12 +269,21 @@ function AdminPanel({ onClose }) {
                 <div key={u.id} className="border border-slate-200 rounded-xl p-3 flex items-center gap-3 flex-wrap">
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-semibold text-slate-900 truncate">
-                      {u.email} {u.role === "admin" && <span className="ml-1 text-[10px] font-bold text-brand-pink brand-pink">ADMIN</span>}
+                      {u.email}{" "}
+                      {u.role === "admin" && <span className="ml-1 text-[10px] font-bold text-brand-pink brand-pink">ADMIN</span>}
+                      {u.role === "magazzino" && <span className="ml-1 text-[10px] font-bold text-slate-800 bg-slate-100 px-1.5 py-0.5 rounded">MAGAZZINO</span>}
+                      {u.role === "user" && <span className="ml-1 text-[10px] font-bold text-slate-500">TECNICO</span>}
                     </div>
                     <div className="text-xs text-slate-500">{u.name || "—"} • {new Date(u.created_at).toLocaleString("it-IT")}</div>
                   </div>
                   {u.role !== "admin" && (
                     <>
+                      <select value={u.role} onChange={(e) => setRole(u.id, e.target.value)}
+                        className="text-xs rounded-full border border-slate-200 bg-white px-2 py-1.5"
+                        data-testid={`role-select-${u.email}`}>
+                        <option value="user">Tecnico</option>
+                        <option value="magazzino">Magazzino</option>
+                      </select>
                       <button onClick={() => revoke(u.id)} className="btn-ghost rounded-full px-3 py-1.5 text-xs font-semibold bg-slate-100 hover:bg-slate-200 inline-flex items-center gap-1"><UserX size={12} /> Sospendi</button>
                       <button onClick={() => del(u.id, u.email)} className="btn-ghost rounded-full px-3 py-1.5 text-xs font-semibold bg-red-50 text-red-600 hover:bg-red-100 inline-flex items-center gap-1"><Trash2 size={12} /> Elimina</button>
                     </>
@@ -288,10 +315,22 @@ function ScannerModal({ onClose, onScan, target, setTarget }) {
     ] });
     ref.current = q;
     q.start({ facingMode: "environment" }, { fps: 10, qrbox: { width: 260, height: 160 } },
-      (decoded) => {
+      async (decoded) => {
         if (stopped) return;
         stopped = true;
-        onScan(decoded, target);
+        // Try to grab a snapshot of the current video frame as a File for the note photos
+        let snapshot = null;
+        try {
+          const video = document.querySelector(`#${containerId} video`);
+          if (video && video.videoWidth) {
+            const canvas = document.createElement("canvas");
+            canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+            canvas.getContext("2d").drawImage(video, 0, 0);
+            const blob = await new Promise((r) => canvas.toBlob(r, "image/jpeg", 0.85));
+            if (blob) snapshot = new File([blob], `scan_${target}_${Date.now()}.jpg`, { type: "image/jpeg" });
+          }
+        } catch (_) { /* ignore snapshot errors */ }
+        onScan(decoded, target, snapshot);
         q.stop().then(() => q.clear()).catch(() => {});
       },
       () => {}).catch((err) => toast.error("Impossibile avviare la fotocamera: " + err));
@@ -565,14 +604,47 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect, onOp
     catch (e) { toast.error(errorText(e)); }
   };
 
-  const applyScan = (value, target) => {
+  const applyScan = async (value, target, snapshot) => {
     setForm((f) => ({ ...f, [target]: value }));
     setEdit(true);
     toast.success(`Codice inserito in ${target === "cpe" ? "CPE" : "ONT/SFP"}`);
+    if (snapshot) {
+      try {
+        const fd = new FormData();
+        fd.append("files", snapshot);
+        await axios.post(`${API}/notes/${note.id}/photos`, fd, { headers: { "Content-Type": "multipart/form-data" } });
+        toast.message("Foto del codice aggiunta alla nota");
+        onChanged?.();
+      } catch (_) { /* silent */ }
+    }
   };
 
+  const syncNote = async () => {
+    if (!note.cpe && !note.ont_sfp) { toast.error("Nessun seriale CPE o ONT da sincronizzare"); return; }
+    try { const r = await axios.post(`${API}/notes/${note.id}/sync`); toast.success(`Sincronizzati ${r.data.synced} seriale/i con il magazzino`); onChanged?.(); }
+    catch (e) { toast.error(errorText(e)); }
+  };
+
+  const toggleStatus = async () => {
+    const newStatus = note.status === "sospeso" ? "espletato" : "sospeso";
+    let reason = note.suspend_reason || "";
+    if (newStatus === "sospeso") {
+      reason = window.prompt("Motivo della sospensione:", reason || "");
+      if (reason === null) return;
+    } else {
+      reason = "";
+    }
+    try {
+      await axios.patch(`${API}/notes/${note.id}`, { status: newStatus, suspend_reason: reason });
+      toast.success(newStatus === "sospeso" ? "Nota sospesa (esclusa dalla media)" : "Nota espletata");
+      onChanged?.();
+    } catch (e) { toast.error(errorText(e)); }
+  };
+
+  const isSuspended = note.status === "sospeso";
+
   return (
-    <div className={`bg-white border rounded-2xl card-shadow overflow-hidden stagger-in ${selected ? "border-brand-pink ring-1 ring-brand-pink/40" : "border-slate-200"}`}>
+    <div className={`bg-white border rounded-2xl card-shadow overflow-hidden stagger-in ${selected ? "border-brand-pink ring-1 ring-brand-pink/40" : isSuspended ? "border-amber-200 bg-amber-50/30" : "border-slate-200"}`}>
       <div className="w-full flex items-center gap-3 px-4 sm:px-5 py-4 hover:bg-slate-50 transition">
         <input type="checkbox" checked={!!selected} onChange={() => onToggleSelect?.(note.id)}
           onClick={(e) => e.stopPropagation()} className="h-4 w-4 rounded border-slate-300 accent-pink-600 cursor-pointer"
@@ -580,7 +652,11 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect, onOp
         <button onClick={() => setOpen(!open)} className="flex-1 text-left flex items-center gap-3 min-w-0" data-testid={`note-toggle-${note.wr}`}>
           <div className="wr-badge rounded-full px-3 py-1 text-xs sm:text-sm">WR {note.wr}</div>
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-semibold text-slate-900 truncate">{note.cliente || <span className="text-slate-400 italic">senza cliente</span>}</div>
+            <div className="text-sm font-semibold text-slate-900 truncate">
+              {note.cliente || <span className="text-slate-400 italic">senza cliente</span>}
+              {isSuspended && <span className="ml-2 text-[10px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">SOSPESA</span>}
+              {note.synced && <span className="ml-2 text-[10px] font-bold text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded">SYNC ✓</span>}
+            </div>
             <div className="text-xs text-slate-500 truncate">{note.olo || "—"} • {note.indirizzo || note.via || "—"}</div>
           </div>
           <div className="hidden sm:flex items-center gap-1 text-xs text-slate-500">
@@ -593,11 +669,17 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect, onOp
       {open && (
         <div className="px-4 sm:px-5 pb-5 border-t border-slate-100">
           <div className="mt-4 flex flex-wrap items-center gap-2">
+            <button onClick={toggleStatus} className={`rounded-full px-3 py-2 text-xs font-semibold inline-flex items-center gap-2 ${isSuspended ? "bg-amber-100 text-amber-800 hover:bg-amber-200" : "bg-emerald-100 text-emerald-800 hover:bg-emerald-200"}`} data-testid={`status-toggle-${note.wr}`}>
+              {isSuspended ? <><PauseCircle size={14} /> Sospesa — {note.suspend_reason ? `"${note.suspend_reason.substring(0, 20)}${note.suspend_reason.length > 20 ? '…' : ''}"` : "clicca per riattivare"}</> : <><CheckCircle2 size={14} /> Espletata</>}
+            </button>
             <button onClick={copy} className="rounded-full px-3 py-2 text-xs font-semibold bg-slate-900 text-white inline-flex items-center gap-2 hover:bg-slate-800" data-testid={`copy-note-button-${note.wr}`}>
               <Copy size={14} /> Copia nota
             </button>
             <button onClick={sendGmail} disabled={sending} className="btn-primary rounded-full px-3 py-2 text-xs font-semibold inline-flex items-center gap-2 disabled:opacity-60" data-testid={`send-gmail-button-${note.wr}`}>
               {sending ? <Loader2 className="animate-spin" size={14} /> : <Mail size={14} />} Invia tramite Gmail
+            </button>
+            <button onClick={syncNote} className="rounded-full px-3 py-2 text-xs font-semibold bg-emerald-100 text-emerald-800 hover:bg-emerald-200 inline-flex items-center gap-2" data-testid={`sync-note-${note.wr}`}>
+              <RefreshCw size={14} /> Sincronizza magazzino
             </button>
             <button onClick={() => onOpenScanner(applyScan)} className="rounded-full px-3 py-2 text-xs font-semibold bg-brand-pink/10 text-brand-pink brand-pink inline-flex items-center gap-2 hover:bg-brand-pink/20" data-testid={`scan-serial-${note.wr}`}>
               <ScanLine size={14} /> Scansiona seriale
@@ -695,18 +777,21 @@ function downloadFile(name, content, mime) {
 }
 
 function StatsPanel({ notes, onReset }) {
-  const byDay = notes.reduce((acc, n) => {
+  // Escludi note sospese dalla media
+  const active = notes.filter((n) => n.status !== "sospeso");
+  const suspended = notes.length - active.length;
+  const byDay = active.reduce((acc, n) => {
     const k = localDateKey(n.created_at);
     (acc[k] = acc[k] || []).push(n);
     return acc;
   }, {});
   const dayKeys = Object.keys(byDay).sort();
   const daysCount = dayKeys.length;
-  const total = notes.length;
+  const total = active.length;
   const avg = daysCount > 0 ? total / daysCount : 0;
   const now = new Date();
   const thisMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  const thisMonth = notes.filter((n) => localDateKey(n.created_at).startsWith(thisMonthKey)).length;
+  const thisMonth = active.filter((n) => localDateKey(n.created_at).startsWith(thisMonthKey)).length;
   const thisMonthDays = dayKeys.filter((k) => k.startsWith(thisMonthKey)).length;
   const monthAvg = thisMonthDays > 0 ? thisMonth / thisMonthDays : 0;
   const todayKey = localDateKey(now.toISOString());
@@ -714,10 +799,18 @@ function StatsPanel({ notes, onReset }) {
   const last7 = dayKeys.slice(-7).reverse();
   const maxCount = Math.max(1, ...last7.map((k) => byDay[k].length));
 
+  // Monthly histogram — 30 days
+  const monthKeys = [];
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(now); d.setDate(now.getDate() - i);
+    monthKeys.push(localDateKey(d.toISOString()));
+  }
+  const monthMax = Math.max(1, ...monthKeys.map((k) => (byDay[k] || []).length));
+
   const targetOK = (v) => v >= DAILY_TARGET;
 
   const exportAll = () => {
-    const payload = { exported_at: new Date().toISOString(), total, notes };
+    const payload = { exported_at: new Date().toISOString(), total: notes.length, notes };
     downloadFile(`note-openfiber-${todayKey}.json`, JSON.stringify(payload, null, 2), "application/json");
     toast.success("Esportazione completa avviata");
   };
@@ -788,10 +881,206 @@ function StatsPanel({ notes, onReset }) {
               );
             })}
           </div>
-          <div className="text-[10px] text-slate-400 mt-2">Target: {DAILY_TARGET} note/giorno · verde = raggiunto</div>
+          <div className="text-[10px] text-slate-400 mt-2">Target: {DAILY_TARGET} note/giorno · verde = raggiunto{suspended > 0 ? ` · ${suspended} nota/e sospese escluse` : ""}</div>
         </div>
       )}
+
+      {/* Monthly histogram (30 days) */}
+      <div className="mt-5" data-testid="monthly-histogram">
+        <div className="text-xs font-semibold text-slate-500 mb-2">Andamento ultimi 30 giorni</div>
+        <div className="flex items-end gap-[3px] h-24">
+          {monthKeys.map((k) => {
+            const c = (byDay[k] || []).length;
+            const h = Math.max(4, (c / monthMax) * 96);
+            const ok = c >= DAILY_TARGET;
+            const isToday = k === todayKey;
+            return (
+              <div key={k} title={`${humanDate(k)}: ${c} note`} className="flex-1 flex flex-col items-center justify-end" data-testid={`hist-${k}`}>
+                <div className={`w-full rounded-t ${c === 0 ? "bg-slate-100" : ok ? "bg-emerald-500" : "bg-brand-pink"} ${isToday ? "ring-2 ring-slate-900" : ""}`} style={{ height: `${h}px` }} />
+              </div>
+            );
+          })}
+        </div>
+        <div className="text-[10px] text-slate-400 mt-2">Ogni barra = 1 giorno · bordo scuro = oggi</div>
+      </div>
     </section>
+  );
+}
+
+// ---------- Warehouse Page ----------
+function WarehousePage({ onOpenAdmin, showAdminBtn }) {
+  const [serials, setSerials] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [filter, setFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [tipoFilter, setTipoFilter] = useState("");
+  const [inputSerial, setInputSerial] = useState("");
+  const [inputTipo, setInputTipo] = useState("CPE");
+  const [bulkText, setBulkText] = useState("");
+  const [loading, setLoading] = useState(false);
+  const scanRef = useRef(null);
+
+  const fetchSerials = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await axios.get(`${API}/inventory/serials`, { params: { search: filter, status: statusFilter, tipo: tipoFilter } });
+      setSerials(r.data || []);
+    } catch (e) { toast.error(errorText(e)); }
+    finally { setLoading(false); }
+  }, [filter, statusFilter, tipoFilter]);
+
+  useEffect(() => { const t = setTimeout(fetchSerials, 200); return () => clearTimeout(t); }, [fetchSerials]);
+  useEffect(() => { axios.get(`${API}/inventory/users`).then((r) => setUsers(r.data || [])).catch(() => {}); }, []);
+  useEffect(() => { if (scanRef.current) scanRef.current.focus(); }, []);
+
+  const addSerial = async (s) => {
+    const val = (s || inputSerial || "").trim();
+    if (!val) return;
+    try {
+      await axios.post(`${API}/inventory/serials`, { serial: val, tipo: inputTipo, note: "" });
+      toast.success(`Aggiunto ${val}`);
+      setInputSerial("");
+      fetchSerials();
+    } catch (e) { toast.error(errorText(e)); }
+    finally { setTimeout(() => scanRef.current?.focus(), 50); }
+  };
+
+  const bulkAdd = async () => {
+    const list = bulkText.split(/[\n,;\s]+/).map((s) => s.trim()).filter(Boolean);
+    if (!list.length) return;
+    try {
+      const r = await axios.post(`${API}/inventory/serials/bulk`, { serials: list, tipo: inputTipo });
+      toast.success(`${r.data.created} aggiunti, ${r.data.skipped.length} già presenti`);
+      setBulkText(""); fetchSerials();
+    } catch (e) { toast.error(errorText(e)); }
+  };
+
+  const assign = async (id, userId) => {
+    try { await axios.patch(`${API}/inventory/serials/${id}`, { assigned_to_user_id: userId }); toast.success("Assegnazione aggiornata"); fetchSerials(); }
+    catch (e) { toast.error(errorText(e)); }
+  };
+
+  const del = async (id, s) => {
+    if (!window.confirm(`Eliminare seriale ${s}?`)) return;
+    try { await axios.delete(`${API}/inventory/serials/${id}`); toast.success("Eliminato"); fetchSerials(); }
+    catch (e) { toast.error(errorText(e)); }
+  };
+
+  const stats = {
+    total: serials.length,
+    in_stock: serials.filter((s) => s.status === "in_stock").length,
+    assegnato: serials.filter((s) => s.status === "assegnato").length,
+    scaricato: serials.filter((s) => s.status === "scaricato").length,
+  };
+
+  return (
+    <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-10 space-y-6" data-testid="warehouse-content">
+      <section className="bg-white border border-slate-200 rounded-2xl card-shadow p-4 sm:p-5" data-testid="warehouse-add">
+        <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Aggiungi seriale</div>
+        <h2 className="text-lg font-display font-bold mt-0.5 mb-3">Aggiungi al magazzino</h2>
+        <div className="text-xs text-slate-500 mb-3">Punta il campo qui sotto e usa la pistola scanner USB/wireless — legge il seriale e invia Enter. Puoi anche digitare a mano.</div>
+        <form onSubmit={(e) => { e.preventDefault(); addSerial(); }} className="flex flex-wrap gap-2 items-center">
+          <select value={inputTipo} onChange={(e) => setInputTipo(e.target.value)} className="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm" data-testid="add-tipo">
+            <option value="CPE">CPE (modem)</option>
+            <option value="ONT">ONT / SFP</option>
+            <option value="ALTRO">Altro</option>
+          </select>
+          <input ref={scanRef} value={inputSerial} onChange={(e) => setInputSerial(e.target.value)} placeholder="Scansiona o digita seriale, poi Enter"
+            className="flex-1 min-w-[220px] rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-pink"
+            data-testid="add-serial-input" autoFocus />
+          <button type="submit" className="btn-primary rounded-full px-4 py-2 text-sm font-semibold inline-flex items-center gap-2" data-testid="add-serial-btn">
+            <Package size={14} /> Aggiungi
+          </button>
+        </form>
+        <details className="mt-3">
+          <summary className="text-xs font-semibold text-slate-600 cursor-pointer">Inserimento massivo (una riga per seriale)</summary>
+          <textarea value={bulkText} onChange={(e) => setBulkText(e.target.value)} rows={4} placeholder="ABC123&#10;DEF456"
+            className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-pink"
+            data-testid="bulk-serial-textarea" />
+          <button onClick={bulkAdd} className="mt-2 rounded-full px-3 py-2 text-xs font-semibold bg-slate-900 text-white hover:bg-slate-800 inline-flex items-center gap-2" data-testid="bulk-serial-btn">
+            <Package size={14} /> Aggiungi tutti come {inputTipo}
+          </button>
+        </details>
+      </section>
+
+      <section className="grid grid-cols-2 sm:grid-cols-4 gap-3" data-testid="warehouse-stats">
+        <div className="rounded-xl bg-white border border-slate-200 p-3"><div className="text-[11px] text-slate-500 font-semibold">Totale</div><div className="text-2xl font-display font-extrabold">{stats.total}</div></div>
+        <div className="rounded-xl bg-white border border-slate-200 p-3"><div className="text-[11px] text-slate-500 font-semibold">In stock</div><div className="text-2xl font-display font-extrabold text-emerald-600">{stats.in_stock}</div></div>
+        <div className="rounded-xl bg-white border border-slate-200 p-3"><div className="text-[11px] text-slate-500 font-semibold">Assegnati</div><div className="text-2xl font-display font-extrabold text-amber-600">{stats.assegnato}</div></div>
+        <div className="rounded-xl bg-white border border-slate-200 p-3"><div className="text-[11px] text-slate-500 font-semibold">Scaricati</div><div className="text-2xl font-display font-extrabold text-slate-500">{stats.scaricato}</div></div>
+      </section>
+
+      <section className="bg-white border border-slate-200 rounded-2xl card-shadow p-4 sm:p-5" data-testid="warehouse-list">
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          <div className="relative flex-1 min-w-[200px]">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Cerca seriale/utente"
+              className="w-full pl-9 pr-3 py-2 rounded-full border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-pink" data-testid="warehouse-search" />
+          </div>
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="rounded-full border border-slate-200 px-3 py-2 text-sm" data-testid="warehouse-status-filter">
+            <option value="">Tutti gli stati</option>
+            <option value="in_stock">In stock</option>
+            <option value="assegnato">Assegnati</option>
+            <option value="scaricato">Scaricati</option>
+          </select>
+          <select value={tipoFilter} onChange={(e) => setTipoFilter(e.target.value)} className="rounded-full border border-slate-200 px-3 py-2 text-sm" data-testid="warehouse-tipo-filter">
+            <option value="">Tutti i tipi</option>
+            <option value="CPE">CPE</option>
+            <option value="ONT">ONT</option>
+            <option value="ALTRO">Altro</option>
+          </select>
+        </div>
+        {loading ? (
+          <div className="flex items-center gap-2 text-slate-500 text-sm p-4"><Loader2 className="animate-spin" size={16} /> Caricamento…</div>
+        ) : serials.length === 0 ? (
+          <div className="border border-dashed border-slate-200 rounded-2xl p-8 text-center text-slate-500 text-sm">Nessun seriale in magazzino</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-slate-500 font-semibold border-b border-slate-200">
+                  <th className="py-2 pr-2">Seriale</th>
+                  <th className="py-2 pr-2">Tipo</th>
+                  <th className="py-2 pr-2">Stato</th>
+                  <th className="py-2 pr-2">Assegnato a</th>
+                  <th className="py-2 pr-2">Scaricato da</th>
+                  <th className="py-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {serials.map((s) => (
+                  <tr key={s.id} className="border-b border-slate-100 last:border-0" data-testid={`serial-row-${s.serial}`}>
+                    <td className="py-2 pr-2 font-mono text-slate-900">{s.serial}</td>
+                    <td className="py-2 pr-2 text-slate-600">{s.tipo}</td>
+                    <td className="py-2 pr-2">
+                      {s.status === "in_stock" && <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded">IN STOCK</span>}
+                      {s.status === "assegnato" && <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded">ASSEGNATO</span>}
+                      {s.status === "scaricato" && <span className="text-[10px] font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">SCARICATO</span>}
+                    </td>
+                    <td className="py-2 pr-2">
+                      <select value={s.assigned_to_user_id || ""} onChange={(e) => assign(s.id, e.target.value)} disabled={s.status === "scaricato"}
+                        className="text-xs rounded-full border border-slate-200 bg-white px-2 py-1 disabled:opacity-50 max-w-[180px]"
+                        data-testid={`assign-${s.serial}`}>
+                        <option value="">— Non assegnato —</option>
+                        {users.map((u) => <option key={u.id} value={u.id}>{u.name || u.email}</option>)}
+                      </select>
+                    </td>
+                    <td className="py-2 pr-2 text-xs text-slate-600">
+                      {s.downloaded_by_name ? (
+                        <span>{s.downloaded_by_name}<br /><span className="text-[10px] text-slate-400">{s.downloaded_at ? new Date(s.downloaded_at).toLocaleString("it-IT") : ""}</span></span>
+                      ) : "—"}
+                    </td>
+                    <td className="py-2 text-right">
+                      <button onClick={() => del(s.id, s.serial)} className="text-red-600 hover:bg-red-50 rounded-full p-1.5" data-testid={`delete-serial-${s.serial}`}><Trash2 size={14} /></button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </main>
   );
 }
 
@@ -800,6 +1089,8 @@ function AppContent() {
   const { user } = useAuth();
   const [notes, setNotes] = useState([]);
   const [search, setSearch] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [loading, setLoading] = useState(false);
   const [lastCreatedIds, setLastCreatedIds] = useState([]);
   const [selectedIds, setSelectedIds] = useState([]);
@@ -807,6 +1098,15 @@ function AppContent() {
   const [adminOpen, setAdminOpen] = useState(false);
   const [scanner, setScanner] = useState(null); // { onScan }
   const [scanTarget, setScanTarget] = useState(null);
+  const [page, setPage] = useState(user?.role === "magazzino" ? "warehouse" : "notes");
+
+  const filteredNotes = notes.filter((n) => {
+    if (!dateFrom && !dateTo) return true;
+    const k = localDateKey(n.created_at);
+    if (dateFrom && k < dateFrom) return false;
+    if (dateTo && k > dateTo) return false;
+    return true;
+  });
 
   const fetchNotes = useCallback(async () => {
     setLoading(true);
@@ -852,19 +1152,26 @@ function AppContent() {
 
   const openScanner = (onScan) => { setScanner({ onScan }); setScanTarget(null); };
   const closeScanner = () => { setScanner(null); setScanTarget(null); };
-  const handleScan = (value, target) => {
-    scanner?.onScan?.(value, target);
+  const handleScan = (value, target, snapshot) => {
+    scanner?.onScan?.(value, target, snapshot);
     closeScanner();
   };
 
+  const canSwitchPage = user?.role === "admin";
+  const effectivePage = user?.role === "magazzino" ? "warehouse" : (canSwitchPage ? page : "notes");
+
   return (
     <div className="min-h-screen">
-      <Header showAdminBtn={user?.role === "admin"} onAdmin={() => setAdminOpen(true)} />
+      <Header showAdminBtn={user?.role === "admin"} onAdmin={() => setAdminOpen(true)}
+        page={effectivePage} onPageChange={setPage} canSwitchPage={canSwitchPage} />
       <Toaster richColors position="top-center" />
+      {effectivePage === "warehouse" ? (
+        <WarehousePage onOpenAdmin={() => setAdminOpen(true)} showAdminBtn={user?.role === "admin"} />
+      ) : (
       <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-10 space-y-6" data-testid="main-content">
         <PdfUploader onParsed={handleParsed} />
 
-        <StatsPanel notes={notes} onReset={resetMonth} />
+        <StatsPanel notes={filteredNotes} onReset={resetMonth} />
 
         <section className="bg-white border border-slate-200 rounded-2xl card-shadow p-4 sm:p-5">
           <div className="flex items-center justify-between gap-3">
@@ -882,17 +1189,28 @@ function AppContent() {
         <section>
           <div className="flex flex-wrap items-center gap-3 mb-3">
             <h2 className="text-lg sm:text-xl font-display font-bold text-slate-900">Note</h2>
-            <span className="text-xs text-slate-500">{notes.length} totali</span>
-            <div className="ml-auto relative w-full sm:w-80">
-              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input value={search} onChange={(e) => setSearch(e.target.value)}
-                placeholder="Cerca WR, cliente o OLO"
-                className="w-full pl-9 pr-3 py-2 rounded-full border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-pink focus:border-transparent"
-                data-testid="search-archive-input" />
+            <span className="text-xs text-slate-500">{filteredNotes.length} / {notes.length}</span>
+            <div className="ml-auto flex gap-2 flex-wrap items-center">
+              <div className="inline-flex items-center gap-1 text-xs text-slate-500">
+                <Calendar size={14} />
+                <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="rounded-full border border-slate-200 px-2 py-1.5 text-xs" data-testid="date-from" />
+                <span>–</span>
+                <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="rounded-full border border-slate-200 px-2 py-1.5 text-xs" data-testid="date-to" />
+                {(dateFrom || dateTo) && (
+                  <button onClick={() => { setDateFrom(""); setDateTo(""); }} className="text-slate-500 hover:text-slate-900 p-1" data-testid="clear-date"><X size={12} /></button>
+                )}
+              </div>
+              <div className="relative w-full sm:w-64">
+                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input value={search} onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Cerca WR, cliente o OLO"
+                  className="w-full pl-9 pr-3 py-2 rounded-full border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-pink focus:border-transparent"
+                  data-testid="search-archive-input" />
+              </div>
             </div>
           </div>
 
-          {notes.length > 0 && (
+          {filteredNotes.length > 0 && (
             <div className="mb-3 flex flex-wrap items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 py-2">
               <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-700 cursor-pointer">
                 <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} className="h-4 w-4 rounded border-slate-300 accent-pink-600" data-testid="select-all-checkbox" />
@@ -909,14 +1227,14 @@ function AppContent() {
 
           {loading ? (
             <div className="flex items-center gap-2 text-slate-500 text-sm p-6"><Loader2 className="animate-spin" size={16} /> Caricamento…</div>
-          ) : notes.length === 0 ? (
+          ) : filteredNotes.length === 0 ? (
             <div className="border border-dashed border-slate-200 rounded-2xl p-8 text-center text-slate-500 text-sm bg-white" data-testid="empty-state">
-              Nessuna nota. Carica un PDF Open Fiber per iniziare.
+              {notes.length === 0 ? "Nessuna nota. Carica un PDF Open Fiber per iniziare." : "Nessuna nota nel range selezionato."}
             </div>
           ) : (
             <div className="space-y-6" data-testid="notes-groups">
               {(() => {
-                const groups = notes.reduce((acc, n) => {
+                const groups = filteredNotes.reduce((acc, n) => {
                   const k = localDateKey(n.created_at);
                   (acc[k] = acc[k] || []).push(n);
                   return acc;
@@ -943,6 +1261,7 @@ function AppContent() {
           )}
         </section>
       </main>
+      )}
       <footer className="max-w-6xl mx-auto px-4 sm:px-6 py-6 text-center text-xs text-slate-400">
         creato e amministrato da <span className="text-slate-600 font-semibold">Giuseppe Belviso</span>
       </footer>

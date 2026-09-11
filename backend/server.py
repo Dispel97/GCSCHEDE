@@ -248,6 +248,10 @@ class Note(BaseModel):
     photos: List[Photo] = Field(default_factory=list)
     pdf_filename: str = ''
     pdf_storage_path: str = ''
+    status: str = 'espletato'  # espletato | sospeso
+    suspend_reason: str = ''
+    synced: bool = False
+    synced_at: str = ''
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -268,6 +272,8 @@ class NoteUpdate(BaseModel):
     mono: Optional[str] = None; internal: Optional[str] = None
     note_text: Optional[str] = None
     note_text_manual: Optional[bool] = None
+    status: Optional[str] = None
+    suspend_reason: Optional[str] = None
 
 
 class BulkDeleteRequest(BaseModel):
@@ -283,6 +289,46 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+
+
+class ApproveRequest(BaseModel):
+    role: Optional[str] = "user"  # "user" | "magazzino"
+
+
+class SerialItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    serial: str
+    tipo: str = "CPE"  # CPE | ONT | ALTRO
+    status: str = "in_stock"  # in_stock | assegnato | scaricato
+    assigned_to_user_id: str = ""
+    assigned_to_name: str = ""
+    downloaded_by_user_id: str = ""
+    downloaded_by_name: str = ""
+    downloaded_at: str = ""
+    note: str = ""
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class SerialCreate(BaseModel):
+    serial: str
+    tipo: str = "CPE"
+    note: str = ""
+    assigned_to_user_id: Optional[str] = ""
+
+
+class SerialUpdate(BaseModel):
+    serial: Optional[str] = None
+    tipo: Optional[str] = None
+    status: Optional[str] = None
+    assigned_to_user_id: Optional[str] = None
+    note: Optional[str] = None
+
+
+class BulkSerialsRequest(BaseModel):
+    serials: List[str]
+    tipo: str = "CPE"
 
 
 # ---------- Auth Routes ----------
@@ -342,11 +388,29 @@ async def admin_list_pending(admin: dict = Depends(get_current_admin)):
 
 
 @api_router.post("/auth/admin/approve/{user_id}")
-async def admin_approve(user_id: str, admin: dict = Depends(get_current_admin)):
-    res = await db.users.update_one({"id": user_id}, {"$set": {"is_approved": True}})
+async def admin_approve(user_id: str, body: Optional[ApproveRequest] = None,
+                        admin: dict = Depends(get_current_admin)):
+    role = (body.role if body else "user") or "user"
+    if role not in ("user", "magazzino"):
+        raise HTTPException(status_code=400, detail="Ruolo non valido")
+    res = await db.users.update_one({"id": user_id, "role": {"$ne": "admin"}},
+                                    {"$set": {"is_approved": True, "role": role}})
     if not res.matched_count:
         raise HTTPException(status_code=404, detail="Utente non trovato")
-    return {"approved": True, "id": user_id}
+    return {"approved": True, "id": user_id, "role": role}
+
+
+@api_router.post("/auth/admin/set-role/{user_id}")
+async def admin_set_role(user_id: str, body: ApproveRequest,
+                         admin: dict = Depends(get_current_admin)):
+    role = body.role or "user"
+    if role not in ("user", "magazzino"):
+        raise HTTPException(status_code=400, detail="Ruolo non valido")
+    res = await db.users.update_one({"id": user_id, "role": {"$ne": "admin"}},
+                                    {"$set": {"role": role}})
+    if not res.matched_count:
+        raise HTTPException(status_code=404, detail="Utente non trovato")
+    return {"id": user_id, "role": role}
 
 
 @api_router.post("/auth/admin/revoke/{user_id}")
@@ -517,6 +581,150 @@ async def download_file(path: str = Query(...)):
     return Response(content=data, media_type=ct)
 
 
+# ---------- Inventory / Magazzino ----------
+async def get_magazzino_or_admin(user: dict = Depends(get_current_user)) -> dict:
+    role = user.get("role")
+    if role not in ("admin", "magazzino"):
+        raise HTTPException(status_code=403, detail="Accesso riservato al magazzino / admin")
+    return user
+
+
+def _serial_from_doc(doc: dict) -> dict:
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.get("/inventory/serials")
+async def list_serials(
+    search: str = Query(''),
+    status: str = Query(''),
+    tipo: str = Query(''),
+    user: dict = Depends(get_magazzino_or_admin),
+):
+    q = {}
+    if status:
+        q["status"] = status
+    if tipo:
+        q["tipo"] = tipo
+    if search:
+        rx = {"$regex": re.escape(search), "$options": "i"}
+        q = {"$and": [q, {"$or": [{"serial": rx}, {"assigned_to_name": rx}, {"downloaded_by_name": rx}]}]} if q else {"$or": [{"serial": rx}, {"assigned_to_name": rx}, {"downloaded_by_name": rx}]}
+    docs = await db.serials.find(q, {"_id": 0}).sort("created_at", -1).to_list(2000)
+    return docs
+
+
+@api_router.post("/inventory/serials")
+async def create_serial(req: SerialCreate, user: dict = Depends(get_magazzino_or_admin)):
+    serial = (req.serial or "").strip()
+    if not serial:
+        raise HTTPException(status_code=400, detail="Seriale richiesto")
+    if await db.serials.find_one({"serial": serial}):
+        raise HTTPException(status_code=400, detail="Seriale già presente")
+    item = SerialItem(serial=serial, tipo=req.tipo or "CPE", note=req.note or "")
+    if req.assigned_to_user_id:
+        u = await db.users.find_one({"id": req.assigned_to_user_id})
+        if u:
+            item.assigned_to_user_id = u["id"]
+            item.assigned_to_name = u.get("name") or u.get("email") or ""
+            item.status = "assegnato"
+    doc = item.model_dump()
+    await db.serials.insert_one(dict(doc))
+    return doc
+
+
+@api_router.post("/inventory/serials/bulk")
+async def create_serials_bulk(req: BulkSerialsRequest, user: dict = Depends(get_magazzino_or_admin)):
+    created, skipped = [], []
+    for raw in req.serials:
+        s = (raw or "").strip()
+        if not s:
+            continue
+        if await db.serials.find_one({"serial": s}):
+            skipped.append(s); continue
+        item = SerialItem(serial=s, tipo=req.tipo or "CPE")
+        d = item.model_dump()
+        await db.serials.insert_one(dict(d))
+        created.append(d)
+    return {"created": len(created), "skipped": skipped, "items": created}
+
+
+@api_router.patch("/inventory/serials/{sid}")
+async def update_serial(sid: str, upd: SerialUpdate, user: dict = Depends(get_magazzino_or_admin)):
+    doc = await db.serials.find_one({"id": sid}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Seriale non trovato")
+    updates = {k: v for k, v in upd.model_dump().items() if v is not None}
+    if "assigned_to_user_id" in updates:
+        uid = updates["assigned_to_user_id"]
+        if uid:
+            u = await db.users.find_one({"id": uid})
+            if not u:
+                raise HTTPException(status_code=400, detail="Utente assegnatario inesistente")
+            updates["assigned_to_user_id"] = u["id"]
+            updates["assigned_to_name"] = u.get("name") or u.get("email") or ""
+            if doc.get("status") == "in_stock":
+                updates["status"] = "assegnato"
+        else:
+            updates["assigned_to_user_id"] = ""
+            updates["assigned_to_name"] = ""
+            if doc.get("status") == "assegnato":
+                updates["status"] = "in_stock"
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.serials.update_one({"id": sid}, {"$set": updates})
+    fresh = await db.serials.find_one({"id": sid}, {"_id": 0})
+    return fresh
+
+
+@api_router.delete("/inventory/serials/{sid}")
+async def delete_serial(sid: str, user: dict = Depends(get_magazzino_or_admin)):
+    res = await db.serials.delete_one({"id": sid})
+    return {"deleted": res.deleted_count}
+
+
+@api_router.get("/inventory/users")
+async def list_users_for_assignment(user: dict = Depends(get_magazzino_or_admin)):
+    docs = await db.users.find({"is_approved": True, "role": {"$in": ["user", "admin"]}},
+                               {"_id": 0, "password_hash": 0}).sort("email", 1).to_list(500)
+    return docs
+
+
+# ---------- Note Sync (marks CPE + ONT serials as scaricato) ----------
+@api_router.post("/notes/{note_id}/sync")
+async def sync_note_serials(note_id: str, user: dict = Depends(get_current_user)):
+    doc = await _get_own_note(note_id, user)
+    updates_count = 0
+    now_iso = datetime.now(timezone.utc).isoformat()
+    display_name = user.get("name") or user.get("email") or user.get("id")
+    for field, tipo in (("cpe", "CPE"), ("ont_sfp", "ONT")):
+        raw = (doc.get(field) or "").strip()
+        if not raw:
+            continue
+        existing = await db.serials.find_one({"serial": raw})
+        if existing:
+            await db.serials.update_one(
+                {"id": existing["id"]},
+                {"$set": {
+                    "status": "scaricato",
+                    "downloaded_by_user_id": user["id"],
+                    "downloaded_by_name": display_name,
+                    "downloaded_at": now_iso,
+                    "updated_at": now_iso,
+                }},
+            )
+        else:
+            item = SerialItem(
+                serial=raw, tipo=tipo, status="scaricato",
+                downloaded_by_user_id=user["id"], downloaded_by_name=display_name,
+                downloaded_at=now_iso,
+            )
+            await db.serials.insert_one(dict(item.model_dump()))
+        updates_count += 1
+    await db.notes.update_one({"id": note_id},
+                              {"$set": {"synced": True, "synced_at": now_iso, "updated_at": now_iso}})
+    fresh = await db.notes.find_one({"id": note_id}, {"_id": 0})
+    return {"synced": updates_count, "note": fresh}
+
+
 app.include_router(api_router)
 
 app.add_middleware(
@@ -562,6 +770,7 @@ async def startup():
         logger.error(f"Storage init failed: {e}")
     try:
         await db.users.create_index("email", unique=True)
+        await db.serials.create_index("serial", unique=True)
         await seed_admin()
     except Exception as e:
         logger.error(f"Admin seed failed: {e}")

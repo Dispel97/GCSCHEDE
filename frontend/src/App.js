@@ -1221,14 +1221,17 @@ function SerialHistoryModal({ serialItem, onClose }) {
 function WarehousePage({ onOpenAdmin, showAdminBtn }) {
   const [serials, setSerials] = useState([]);
   const [users, setUsers] = useState([]);
+  const [tags, setTags] = useState([]);
   const [filter, setFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [tipoFilter, setTipoFilter] = useState("");
   const [inputSerial, setInputSerial] = useState("");
-  const [inputTipo, setInputTipo] = useState("CPE");
+  const [inputTipo, setInputTipo] = useState("");
   const [bulkText, setBulkText] = useState("");
   const [loading, setLoading] = useState(false);
   const [historyItem, setHistoryItem] = useState(null);
+  const [editingTipoId, setEditingTipoId] = useState(null);
+  const [editingTipoVal, setEditingTipoVal] = useState("");
   const scanRef = useRef(null);
 
   const fetchSerials = useCallback(async () => {
@@ -1240,18 +1243,23 @@ function WarehousePage({ onOpenAdmin, showAdminBtn }) {
     finally { setLoading(false); }
   }, [filter, statusFilter, tipoFilter]);
 
+  const fetchTags = useCallback(async () => {
+    try { const r = await axios.get(`${API}/inventory/tags`); setTags(r.data.tags || []); } catch (_) {}
+  }, []);
+
   useEffect(() => { const t = setTimeout(fetchSerials, 200); return () => clearTimeout(t); }, [fetchSerials]);
   useEffect(() => { axios.get(`${API}/inventory/users`).then((r) => setUsers(r.data || [])).catch(() => {}); }, []);
+  useEffect(() => { fetchTags(); }, [fetchTags]);
   useEffect(() => { if (scanRef.current) scanRef.current.focus(); }, []);
 
   const addSerial = async (s) => {
     const val = (s || inputSerial || "").trim();
     if (!val) return;
     try {
-      await axios.post(`${API}/inventory/serials`, { serial: val, tipo: inputTipo, note: "" });
-      toast.success(`Aggiunto ${val}`);
+      await axios.post(`${API}/inventory/serials`, { serial: val, tipo: inputTipo.trim(), note: "" });
+      toast.success(`Aggiunto ${val}${inputTipo.trim() ? ` (${inputTipo.trim()})` : ""}`);
       setInputSerial("");
-      fetchSerials();
+      fetchSerials(); fetchTags();
     } catch (e) { toast.error(errorText(e)); }
     finally { setTimeout(() => scanRef.current?.focus(), 50); }
   };
@@ -1260,15 +1268,24 @@ function WarehousePage({ onOpenAdmin, showAdminBtn }) {
     const list = bulkText.split(/[\n,;\s]+/).map((s) => s.trim()).filter(Boolean);
     if (!list.length) return;
     try {
-      const r = await axios.post(`${API}/inventory/serials/bulk`, { serials: list, tipo: inputTipo });
+      const r = await axios.post(`${API}/inventory/serials/bulk`, { serials: list, tipo: inputTipo.trim() });
       toast.success(`${r.data.created} aggiunti, ${r.data.skipped.length} già presenti`);
-      setBulkText(""); fetchSerials();
+      setBulkText(""); fetchSerials(); fetchTags();
     } catch (e) { toast.error(errorText(e)); }
   };
 
   const assign = async (id, userId) => {
     try { await axios.patch(`${API}/inventory/serials/${id}`, { assigned_to_user_id: userId }); toast.success("Assegnazione aggiornata"); fetchSerials(); }
     catch (e) { toast.error(errorText(e)); }
+  };
+
+  const saveTipo = async (id) => {
+    const v = editingTipoVal.trim();
+    try {
+      await axios.patch(`${API}/inventory/serials/${id}`, { tipo: v });
+      setEditingTipoId(null); setEditingTipoVal("");
+      fetchSerials(); fetchTags();
+    } catch (e) { toast.error(errorText(e)); }
   };
 
   const del = async (id, s) => {
@@ -1303,11 +1320,13 @@ function WarehousePage({ onOpenAdmin, showAdminBtn }) {
         <h2 className="text-lg font-display font-bold mt-0.5 mb-3">Aggiungi al magazzino</h2>
         <div className="text-xs text-slate-500 mb-3">Punta il campo qui sotto e usa la pistola scanner USB/wireless — legge il seriale e invia Enter. Puoi anche digitare a mano.</div>
         <form onSubmit={(e) => { e.preventDefault(); addSerial(); }} className="flex flex-wrap gap-2 items-center">
-          <select value={inputTipo} onChange={(e) => setInputTipo(e.target.value)} className="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm" data-testid="add-tipo">
-            <option value="CPE">CPE (modem)</option>
-            <option value="ONT">ONT / SFP</option>
-            <option value="ALTRO">Altro</option>
-          </select>
+          <input list="wh-tags-datalist" value={inputTipo} onChange={(e) => setInputTipo(e.target.value)}
+            placeholder="Tag (es. CPE, ONT, SFP, Router…)"
+            className="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm w-36 focus:outline-none focus:ring-2 focus:ring-brand-pink"
+            data-testid="add-tipo" />
+          <datalist id="wh-tags-datalist">
+            {tags.map((t) => <option key={t} value={t} />)}
+          </datalist>
           <input ref={scanRef} value={inputSerial} onChange={(e) => setInputSerial(e.target.value)} placeholder="Scansiona o digita seriale, poi Enter"
             className="flex-1 min-w-[220px] rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-pink"
             data-testid="add-serial-input" autoFocus />
@@ -1315,13 +1334,14 @@ function WarehousePage({ onOpenAdmin, showAdminBtn }) {
             <Package size={14} /> Aggiungi
           </button>
         </form>
+        <div className="text-[11px] text-slate-400 mt-1">Il tag è libero. Puoi lasciarlo vuoto e assegnarlo dopo cliccando sul tag nella tabella.</div>
         <details className="mt-3">
           <summary className="text-xs font-semibold text-slate-600 cursor-pointer">Inserimento massivo (una riga per seriale)</summary>
           <textarea value={bulkText} onChange={(e) => setBulkText(e.target.value)} rows={4} placeholder="ABC123&#10;DEF456"
             className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-pink"
             data-testid="bulk-serial-textarea" />
           <button onClick={bulkAdd} className="mt-2 rounded-full px-3 py-2 text-xs font-semibold bg-slate-900 text-white hover:bg-slate-800 inline-flex items-center gap-2" data-testid="bulk-serial-btn">
-            <Package size={14} /> Aggiungi tutti come {inputTipo}
+            <Package size={14} /> Aggiungi tutti{inputTipo.trim() ? ` come ${inputTipo.trim()}` : ""}
           </button>
         </details>
       </section>
@@ -1347,10 +1367,8 @@ function WarehousePage({ onOpenAdmin, showAdminBtn }) {
             <option value="scaricato">Scaricati</option>
           </select>
           <select value={tipoFilter} onChange={(e) => setTipoFilter(e.target.value)} className="rounded-full border border-slate-200 px-3 py-2 text-sm" data-testid="warehouse-tipo-filter">
-            <option value="">Tutti i tipi</option>
-            <option value="CPE">CPE</option>
-            <option value="ONT">ONT</option>
-            <option value="ALTRO">Altro</option>
+            <option value="">Tutti i tag</option>
+            {tags.map((t) => <option key={t} value={t}>{t}</option>)}
           </select>
           <button onClick={exportCSV} className="rounded-full px-3 py-2 text-xs font-semibold bg-slate-900 text-white hover:bg-slate-800 inline-flex items-center gap-1.5" data-testid="warehouse-export-csv">
             <Download size={14} /> Export CSV
@@ -1366,7 +1384,7 @@ function WarehousePage({ onOpenAdmin, showAdminBtn }) {
               <thead>
                 <tr className="text-left text-xs text-slate-500 font-semibold border-b border-slate-200">
                   <th className="py-2 pr-2">Seriale</th>
-                  <th className="py-2 pr-2">Tipo</th>
+                  <th className="py-2 pr-2">Tag</th>
                   <th className="py-2 pr-2">Stato</th>
                   <th className="py-2 pr-2">Assegnato a</th>
                   <th className="py-2 pr-2">Scaricato da</th>
@@ -1381,7 +1399,25 @@ function WarehousePage({ onOpenAdmin, showAdminBtn }) {
                         <History size={12} className="text-slate-400" /> {s.serial}
                       </button>
                     </td>
-                    <td className="py-2 pr-2 text-slate-600">{s.tipo}</td>
+                    <td className="py-2 pr-2 text-slate-600">
+                      {editingTipoId === s.id ? (
+                        <div className="inline-flex items-center gap-1">
+                          <input list="wh-tags-datalist" value={editingTipoVal} onChange={(e) => setEditingTipoVal(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === "Enter") saveTipo(s.id); if (e.key === "Escape") { setEditingTipoId(null); setEditingTipoVal(""); } }}
+                            autoFocus placeholder="tag…"
+                            className="rounded-full border border-slate-300 px-2 py-1 text-xs w-28 focus:outline-none focus:ring-2 focus:ring-brand-pink"
+                            data-testid={`edit-tipo-input-${s.serial}`} />
+                          <button onClick={() => saveTipo(s.id)} className="text-emerald-600 hover:bg-emerald-50 rounded-full p-1" data-testid={`save-tipo-${s.serial}`}><Save size={12} /></button>
+                          <button onClick={() => { setEditingTipoId(null); setEditingTipoVal(""); }} className="text-slate-400 hover:bg-slate-100 rounded-full p-1"><X size={12} /></button>
+                        </div>
+                      ) : (
+                        <button onClick={() => { setEditingTipoId(s.id); setEditingTipoVal(s.tipo || ""); }}
+                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold transition ${s.tipo ? "bg-pink-100 text-pink-800 hover:bg-pink-200" : "bg-slate-100 text-slate-400 hover:bg-slate-200 italic"}`}
+                          data-testid={`tipo-chip-${s.serial}`} title="Clicca per modificare">
+                          {s.tipo || "+ tag"}
+                        </button>
+                      )}
+                    </td>
                     <td className="py-2 pr-2">
                       {s.status === "in_stock" && <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded">IN STOCK</span>}
                       {s.status === "assegnato" && <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded">ASSEGNATO</span>}

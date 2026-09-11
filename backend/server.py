@@ -299,7 +299,7 @@ class SerialItem(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     serial: str
-    tipo: str = "CPE"  # CPE | ONT | ALTRO
+    tipo: str = ""  # free-form tag (es. "CPE", "ONT", "SFP", "Router", etc.)
     status: str = "in_stock"  # in_stock | assegnato | scaricato
     assigned_to_user_id: str = ""
     assigned_to_name: str = ""
@@ -313,7 +313,7 @@ class SerialItem(BaseModel):
 
 class SerialCreate(BaseModel):
     serial: str
-    tipo: str = "CPE"
+    tipo: str = ""
     note: str = ""
     assigned_to_user_id: Optional[str] = ""
 
@@ -328,7 +328,7 @@ class SerialUpdate(BaseModel):
 
 class BulkSerialsRequest(BaseModel):
     serials: List[str]
-    tipo: str = "CPE"
+    tipo: str = ""
 
 
 # ---------- Serial Events / Notifications helpers ----------
@@ -659,7 +659,7 @@ async def create_serial(req: SerialCreate, user: dict = Depends(get_magazzino_or
         raise HTTPException(status_code=400, detail="Seriale richiesto")
     if await db.serials.find_one({"serial": serial}):
         raise HTTPException(status_code=400, detail="Seriale già presente")
-    item = SerialItem(serial=serial, tipo=req.tipo or "CPE", note=req.note or "")
+    item = SerialItem(serial=serial, tipo=(req.tipo or "").strip(), note=req.note or "")
     if req.assigned_to_user_id:
         u = await db.users.find_one({"id": req.assigned_to_user_id})
         if u:
@@ -688,7 +688,7 @@ async def create_serials_bulk(req: BulkSerialsRequest, user: dict = Depends(get_
             continue
         if await db.serials.find_one({"serial": s}):
             skipped.append(s); continue
-        item = SerialItem(serial=s, tipo=req.tipo or "CPE")
+        item = SerialItem(serial=s, tipo=(req.tipo or "").strip())
         d = item.model_dump()
         await db.serials.insert_one(dict(d))
         await add_serial_event(s, "created", user["id"], actor_name,
@@ -703,6 +703,8 @@ async def update_serial(sid: str, upd: SerialUpdate, user: dict = Depends(get_ma
     if not doc:
         raise HTTPException(status_code=404, detail="Seriale non trovato")
     updates = {k: v for k, v in upd.model_dump().items() if v is not None}
+    if "tipo" in updates:
+        updates["tipo"] = (updates["tipo"] or "").strip()
     actor_name = user.get("name") or user.get("email") or ""
     event_to_emit = None
     event_extra = {}
@@ -755,6 +757,13 @@ async def serial_history(sid: str, user: dict = Depends(get_magazzino_or_admin))
         {"serial": doc["serial"]}, {"_id": 0}
     ).sort("created_at", 1).to_list(500)
     return {"serial": doc, "events": events}
+
+
+@api_router.get("/inventory/tags")
+async def list_tags(user: dict = Depends(get_magazzino_or_admin)):
+    tags = await db.serials.distinct("tipo")
+    tags = sorted([t for t in tags if isinstance(t, str) and t.strip()])
+    return {"tags": tags}
 
 
 @api_router.get("/inventory/export.csv")

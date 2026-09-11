@@ -27,6 +27,12 @@ Web app che automatizza la generazione delle note tecniche OpenFiber a partire d
 - Note status espletato/sospeso (era singolo toggle)
 - File offline standalone HTML per Android
 
+### Iteration 11 (11 Feb 2026)
+- **Tag magazzino liberi**: sostituito il dropdown fisso CPE/ONT/ALTRO con un **input free-form** con autocompletamento (`<datalist>`) basato sui tag già usati. Nuovo endpoint `GET /api/inventory/tags`.
+- **Modifica tag inline**: nella tabella magazzino ogni riga mostra un **chip cliccabile** — al click diventa un input con Enter=salva, Esc=annulla. Chip vuoto = "+ tag".
+- **Filtro dinamico**: il dropdown "Tutti i tag" nella lista magazzino è popolato solo con i tag realmente usati (non più valori fissi).
+- **Download pubblici**: creato `/downloads/` con `index.html` che espone: build online (zip 2 MB), file offline (2.6 MB), guida migrazione smartphone, guida tecnica.
+
 ### Iteration 10 (11 Feb 2026)
 - **Tasti stato separati**: `status-espletato-{wr}` (verde) e `status-sospeso-{wr}` (giallo). Il vecchio toggle unico è rimosso.
 - **Scanner migliorato**: 

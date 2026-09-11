@@ -331,6 +331,45 @@ class BulkSerialsRequest(BaseModel):
     tipo: str = "CPE"
 
 
+# ---------- Serial Events / Notifications helpers ----------
+async def add_serial_event(serial: str, event_type: str, actor_id: str = "", actor_name: str = "",
+                           note_id: str = "", note_wr: str = "", extra: Optional[dict] = None):
+    doc = {
+        "id": str(uuid.uuid4()),
+        "serial": serial,
+        "event_type": event_type,  # created | assigned | unassigned | downloaded | manual_update | deleted
+        "actor_id": actor_id,
+        "actor_name": actor_name,
+        "note_id": note_id,
+        "note_wr": note_wr,
+        "extra": extra or {},
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.serial_events.insert_one(dict(doc))
+
+
+async def notify_magazzino(kind: str, message: str, from_user_name: str = "", note_id: str = "",
+                            note_wr: str = "", serials: Optional[List[str]] = None):
+    now_iso = datetime.now(timezone.utc).isoformat()
+    recipients = await db.users.find(
+        {"is_approved": True, "role": {"$in": ["magazzino", "admin"]}},
+        {"_id": 0, "id": 1}
+    ).to_list(500)
+    for r in recipients:
+        await db.notifications.insert_one({
+            "id": str(uuid.uuid4()),
+            "user_id": r["id"],
+            "kind": kind,
+            "message": message,
+            "from_user_name": from_user_name,
+            "note_id": note_id,
+            "note_wr": note_wr,
+            "serials": serials or [],
+            "read": False,
+            "created_at": now_iso,
+        })
+
+
 # ---------- Auth Routes ----------
 @api_router.post("/auth/register")
 async def register(req: RegisterRequest):
@@ -629,12 +668,20 @@ async def create_serial(req: SerialCreate, user: dict = Depends(get_magazzino_or
             item.status = "assegnato"
     doc = item.model_dump()
     await db.serials.insert_one(dict(doc))
+    actor_name = user.get("name") or user.get("email") or ""
+    await add_serial_event(serial, "created", user["id"], actor_name,
+                            extra={"tipo": item.tipo, "status": item.status})
+    if item.assigned_to_user_id:
+        await add_serial_event(serial, "assigned", user["id"], actor_name,
+                                extra={"to_user_id": item.assigned_to_user_id,
+                                       "to_user_name": item.assigned_to_name})
     return doc
 
 
 @api_router.post("/inventory/serials/bulk")
 async def create_serials_bulk(req: BulkSerialsRequest, user: dict = Depends(get_magazzino_or_admin)):
     created, skipped = [], []
+    actor_name = user.get("name") or user.get("email") or ""
     for raw in req.serials:
         s = (raw or "").strip()
         if not s:
@@ -644,6 +691,8 @@ async def create_serials_bulk(req: BulkSerialsRequest, user: dict = Depends(get_
         item = SerialItem(serial=s, tipo=req.tipo or "CPE")
         d = item.model_dump()
         await db.serials.insert_one(dict(d))
+        await add_serial_event(s, "created", user["id"], actor_name,
+                                extra={"tipo": item.tipo, "bulk": True})
         created.append(d)
     return {"created": len(created), "skipped": skipped, "items": created}
 
@@ -654,6 +703,9 @@ async def update_serial(sid: str, upd: SerialUpdate, user: dict = Depends(get_ma
     if not doc:
         raise HTTPException(status_code=404, detail="Seriale non trovato")
     updates = {k: v for k, v in upd.model_dump().items() if v is not None}
+    actor_name = user.get("name") or user.get("email") or ""
+    event_to_emit = None
+    event_extra = {}
     if "assigned_to_user_id" in updates:
         uid = updates["assigned_to_user_id"]
         if uid:
@@ -664,21 +716,71 @@ async def update_serial(sid: str, upd: SerialUpdate, user: dict = Depends(get_ma
             updates["assigned_to_name"] = u.get("name") or u.get("email") or ""
             if doc.get("status") == "in_stock":
                 updates["status"] = "assegnato"
+            event_to_emit = "assigned"
+            event_extra = {"to_user_id": u["id"], "to_user_name": updates["assigned_to_name"]}
         else:
             updates["assigned_to_user_id"] = ""
             updates["assigned_to_name"] = ""
             if doc.get("status") == "assegnato":
                 updates["status"] = "in_stock"
+            event_to_emit = "unassigned"
+            event_extra = {"from_user_name": doc.get("assigned_to_name", "")}
     updates["updated_at"] = datetime.now(timezone.utc).isoformat()
     await db.serials.update_one({"id": sid}, {"$set": updates})
     fresh = await db.serials.find_one({"id": sid}, {"_id": 0})
+    if event_to_emit:
+        await add_serial_event(fresh["serial"], event_to_emit, user["id"], actor_name, extra=event_extra)
+    elif updates:
+        await add_serial_event(fresh["serial"], "manual_update", user["id"], actor_name,
+                                extra={k: v for k, v in updates.items() if k != "updated_at"})
     return fresh
 
 
 @api_router.delete("/inventory/serials/{sid}")
 async def delete_serial(sid: str, user: dict = Depends(get_magazzino_or_admin)):
+    doc = await db.serials.find_one({"id": sid}, {"_id": 0})
     res = await db.serials.delete_one({"id": sid})
+    if doc and res.deleted_count:
+        actor_name = user.get("name") or user.get("email") or ""
+        await add_serial_event(doc["serial"], "deleted", user["id"], actor_name)
     return {"deleted": res.deleted_count}
+
+
+@api_router.get("/inventory/serials/{sid}/history")
+async def serial_history(sid: str, user: dict = Depends(get_magazzino_or_admin)):
+    doc = await db.serials.find_one({"id": sid}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Seriale non trovato")
+    events = await db.serial_events.find(
+        {"serial": doc["serial"]}, {"_id": 0}
+    ).sort("created_at", 1).to_list(500)
+    return {"serial": doc, "events": events}
+
+
+@api_router.get("/inventory/export.csv")
+async def export_inventory_csv(user: dict = Depends(get_magazzino_or_admin)):
+    docs = await db.serials.find({}, {"_id": 0}).sort("created_at", -1).to_list(5000)
+    def esc(v):
+        s = "" if v is None else str(v)
+        if any(c in s for c in [",", "\"", "\n", "\r"]):
+            return "\"" + s.replace("\"", "\"\"") + "\""
+        return s
+    header = ["seriale", "tipo", "stato", "assegnato_a", "scaricato_da", "data_scarico",
+              "note", "creato_il", "aggiornato_il"]
+    rows = [",".join(header)]
+    for d in docs:
+        rows.append(",".join([
+            esc(d.get("serial")), esc(d.get("tipo")), esc(d.get("status")),
+            esc(d.get("assigned_to_name")), esc(d.get("downloaded_by_name")),
+            esc(d.get("downloaded_at")), esc(d.get("note")),
+            esc(d.get("created_at")), esc(d.get("updated_at")),
+        ]))
+    body = "\ufeff" + "\n".join(rows)  # BOM per Excel
+    return Response(
+        content=body,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=magazzino.csv"},
+    )
 
 
 @api_router.get("/inventory/users")
@@ -693,6 +795,7 @@ async def list_users_for_assignment(user: dict = Depends(get_magazzino_or_admin)
 async def sync_note_serials(note_id: str, user: dict = Depends(get_current_user)):
     doc = await _get_own_note(note_id, user)
     updates_count = 0
+    synced_serials = []
     now_iso = datetime.now(timezone.utc).isoformat()
     display_name = user.get("name") or user.get("email") or user.get("id")
     for field, tipo in (("cpe", "CPE"), ("ont_sfp", "ONT")):
@@ -718,11 +821,47 @@ async def sync_note_serials(note_id: str, user: dict = Depends(get_current_user)
                 downloaded_at=now_iso,
             )
             await db.serials.insert_one(dict(item.model_dump()))
+            await add_serial_event(raw, "created", user["id"], display_name,
+                                    extra={"tipo": tipo, "auto_from_sync": True})
+        await add_serial_event(raw, "downloaded", user["id"], display_name,
+                                note_id=doc.get("id", ""), note_wr=doc.get("wr", ""),
+                                extra={"tipo": tipo})
+        synced_serials.append(raw)
         updates_count += 1
     await db.notes.update_one({"id": note_id},
                               {"$set": {"synced": True, "synced_at": now_iso, "updated_at": now_iso}})
+    if synced_serials:
+        wr = doc.get("wr", "")
+        msg = f"{display_name} ha scaricato {len(synced_serials)} seriale/i sulla WR {wr}"
+        await notify_magazzino("note_sync", msg, from_user_name=display_name,
+                                note_id=note_id, note_wr=wr, serials=synced_serials)
     fresh = await db.notes.find_one({"id": note_id}, {"_id": 0})
     return {"synced": updates_count, "note": fresh}
+
+
+# ---------- Notifications ----------
+@api_router.get("/notifications")
+async def list_notifications(unread_only: bool = Query(False),
+                             limit: int = Query(50),
+                             user: dict = Depends(get_current_user)):
+    q = {"user_id": user["id"]}
+    if unread_only:
+        q["read"] = False
+    docs = await db.notifications.find(q, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    unread_count = await db.notifications.count_documents({"user_id": user["id"], "read": False})
+    return {"items": docs, "unread": unread_count}
+
+
+@api_router.post("/notifications/{nid}/read")
+async def mark_notification_read(nid: str, user: dict = Depends(get_current_user)):
+    await db.notifications.update_one({"id": nid, "user_id": user["id"]}, {"$set": {"read": True}})
+    return {"ok": True}
+
+
+@api_router.post("/notifications/read-all")
+async def mark_all_read(user: dict = Depends(get_current_user)):
+    r = await db.notifications.update_many({"user_id": user["id"], "read": False}, {"$set": {"read": True}})
+    return {"updated": r.modified_count}
 
 
 app.include_router(api_router)
@@ -771,6 +910,9 @@ async def startup():
     try:
         await db.users.create_index("email", unique=True)
         await db.serials.create_index("serial", unique=True)
+        await db.serial_events.create_index([("serial", 1), ("created_at", 1)])
+        await db.notifications.create_index([("user_id", 1), ("created_at", -1)])
+        await db.notifications.create_index([("user_id", 1), ("read", 1)])
         await seed_admin()
     except Exception as e:
         logger.error(f"Admin seed failed: {e}")

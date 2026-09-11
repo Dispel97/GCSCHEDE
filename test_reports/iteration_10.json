@@ -1,0 +1,25 @@
+{
+  "summary": "Iteration 10 (split status buttons, notifications, serial history, CSV export) fully tested. Backend: 5/5 pytest in /app/backend/tests/test_iter10.py — serial history events (created/assigned/unassigned/deleted survive deletion & reappear on same serial), CSV export with UTF-8 BOM + exact header row, CSV RBAC (regular user gets 403), full sync→notifications flow (unread increments for admin, single read + read-all mark all → unread=0, downloaded event has note_wr, CPE+ONT serials persisted with status=scaricato), and 401 without Bearer on /api/notifications. Frontend (Playwright + admin login): notifications-bell + panel open/close ✓; nav-warehouse → warehouse-export-csv present, 10 serial-history-<serial> buttons; serial-history-modal + serial-timeline render correctly with 'Ingresso in magazzino', 'Assegnato a TestTech', 'Aggiornamento manuale' events (screenshot verified); on Notes page after expanding a note-toggle-*, TWO separate buttons status-espletato-<wr> (green) and status-sospeso-<wr> (yellow) render and old status-toggle-<wr> is gone. Scanner modal source-verified at App.js:477 with scan-target-cpe/scan-target-ont/close-scanner testids (headless has no camera; per prior iteration guidance).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter10.py",
+    "/app/test_reports/pytest/iter10.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py update_serial() strips None values via `updates = {k:v for k,v in ... if v is not None}` before checking `'assigned_to_user_id' in updates`. This means a client sending JSON `assigned_to_user_id: null` (semantically 'unassign') is silently ignored — no unassigned event, no status flip. Frontend currently sends empty string ('') so it works, but the API contract is inconsistent. Fix: check `upd.model_fields_set` or handle null explicitly.",
+    "server.py NoteUpdate does not include `wr` — patching wr is silently dropped. If the intent is that wr is immutable post-parse, add an explicit validator/response note; otherwise expose it.",
+    "server.py is now 923 lines (up from 782); the recommendation from iter9 to split into routers still stands — auth/notes/inventory/notifications each deserve their own module.",
+    "notify_magazzino inserts one document per recipient inside a Python loop (N round trips). For a small user base this is fine, but consider `insert_many` for future scalability.",
+    "GET /api/inventory/export.csv streams up to 5000 rows synchronously into memory. Consider StreamingResponse if the catalog grows large."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter10.py"],
+  "success_rate": {"backend": "100% (5/5)", "frontend": "100% (all requested data-testids present and interactive; scanner video-capture path source-verified only per prior guidance)"},
+  "test_credentials": "Admin: giuseppe97belviso@gmail.com / Mucchetta4! (from /app/memory/test_credentials.md). Ephemeral test user testi10_tech_*@example.com / TestPass123 created & deleted in-run.",
+  "seed_data_creation": "Ephemeral: 1 tech user, ~2-3 TESTi10-* serials, 4 notes from /tmp fixture — all cleaned up by test teardown (except any residual TESTi10CPE*/TESTi10ONT* which are explicitly deleted by the notifications test).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "test_iter10.py is the new regression file for split-status/notifications/history/CSV. Gotchas: (1) /api/auth/register lowercases emails — always use lowercase in test fixtures when subsequently matching against /api/auth/admin/pending; (2) NoteUpdate does NOT accept `wr`, so patching wr is a no-op — use the note's parsed wr for downstream assertions; (3) unassignment PATCH must send empty string '' not null (backend strips None); (4) serial_events are keyed by serial *string* (not serial id) so deletion+re-creation preserves history for that serial value — this is by design and covered by test_serial_history_events; (5) Playwright: after opening serial-history-modal it intercepts pointer events for the whole page — close it (Escape or click close) before navigating away.",
+  "rca of the issue": "No bugs found. One API-contract inconsistency (unassign via null vs empty string) documented above but does not affect the frontend which uses empty string."
+}

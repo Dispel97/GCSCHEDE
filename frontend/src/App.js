@@ -6,8 +6,11 @@ import {
   Loader2, Search, ChevronDown, ChevronUp, Save, X, Camera, RotateCcw,
   LogOut, Shield, UserCheck, UserX, Users, ScanLine, LogIn, UserPlus,
   Package, RefreshCw, Calendar, CheckCircle2, PauseCircle, Warehouse,
+  Bell, History, Zap, ZapOff, Download,
 } from "lucide-react";
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from "html5-qrcode";
+import JsBarcode from "jsbarcode";
+import QRCode from "qrcode";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -41,6 +44,88 @@ const errorText = (e) => {
   if (d && typeof d.msg === "string") return d.msg;
   return e?.message || "Errore";
 };
+
+// ---------- Generate a clean serial image (barcode + QR + text) ----------
+async function generateSerialImage(serial, label = "") {
+  const W = 800, H = 600;
+  const canvas = document.createElement("canvas");
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext("2d");
+  // White background
+  ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, W, H);
+  // Header
+  ctx.fillStyle = "#0f172a"; // slate-900
+  ctx.font = "bold 26px system-ui, -apple-system, sans-serif";
+  ctx.textBaseline = "top";
+  ctx.fillText(label ? `SERIALE ${label}` : "SERIALE", 30, 24);
+  ctx.fillStyle = "#64748b"; // slate-500
+  ctx.font = "500 14px system-ui, -apple-system, sans-serif";
+  ctx.fillText(new Date().toLocaleString("it-IT"), 30, 58);
+
+  // Barcode CODE128 into its own canvas, then draw
+  try {
+    const bc = document.createElement("canvas");
+    JsBarcode(bc, serial, {
+      format: "CODE128",
+      width: 3,
+      height: 140,
+      displayValue: false,
+      margin: 8,
+      background: "#ffffff",
+      lineColor: "#0f172a",
+    });
+    const targetW = 520;
+    const scale = targetW / bc.width;
+    ctx.drawImage(bc, 30, 100, targetW, bc.height * scale);
+  } catch (e) {
+    ctx.fillStyle = "#dc2626";
+    ctx.fillText("Barcode non generabile", 30, 100);
+  }
+
+  // QR on the right
+  try {
+    const qrDataUrl = await QRCode.toDataURL(serial, {
+      errorCorrectionLevel: "M",
+      margin: 1,
+      width: 220,
+      color: { dark: "#0f172a", light: "#ffffff" },
+    });
+    await new Promise((res) => {
+      const img = new Image();
+      img.onload = () => { ctx.drawImage(img, W - 250, 90, 220, 220); res(); };
+      img.onerror = res;
+      img.src = qrDataUrl;
+    });
+  } catch (_) { /* ignore */ }
+
+  // Serial number in monospace big
+  ctx.fillStyle = "#0f172a";
+  ctx.font = "bold 44px 'Courier New', monospace";
+  const textY = 360;
+  // Measure and center
+  const tw = ctx.measureText(serial).width;
+  const maxTw = W - 60;
+  if (tw > maxTw) {
+    const size = Math.max(20, Math.floor(44 * (maxTw / tw)));
+    ctx.font = `bold ${size}px 'Courier New', monospace`;
+  }
+  const tw2 = ctx.measureText(serial).width;
+  ctx.fillText(serial, (W - tw2) / 2, textY);
+
+  // Divider
+  ctx.strokeStyle = "#e2e8f0"; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(30, 440); ctx.lineTo(W - 30, 440); ctx.stroke();
+
+  // Footer
+  ctx.fillStyle = "#64748b";
+  ctx.font = "500 14px system-ui, -apple-system, sans-serif";
+  ctx.fillText("Generato automaticamente dallo scanner GC Impianti", 30, 460);
+  ctx.fillStyle = "#94a3b8";
+  ctx.font = "500 12px system-ui, -apple-system, sans-serif";
+  ctx.fillText("Barcode CODE128 + QR contengono il seriale sopra riportato", 30, 484);
+
+  return new Promise((resolve) => canvas.toBlob((b) => resolve(b), "image/png", 0.95));
+}
 
 // ---------- Axios interceptor ----------
 axios.interceptors.request.use((config) => {
@@ -112,7 +197,8 @@ function Header({ onAdmin, showAdminBtn, page, onPageChange, canSwitchPage }) {
                 </button>
               </div>
             )}
-            <div className={`${canSwitchPage ? "" : "ml-auto"} flex gap-2`}>
+            <div className={`${canSwitchPage ? "" : "ml-auto"} flex gap-2 items-center`}>
+              {(user.role === "admin" || user.role === "magazzino") && <NotificationsBell />}
               {showAdminBtn && (
                 <button onClick={onAdmin} className="btn-ghost text-xs font-semibold text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-full px-3 py-1.5 inline-flex items-center gap-1" data-testid="btn-admin-panel">
                   <Users size={14} /> Admin
@@ -299,9 +385,27 @@ function AdminPanel({ onClose }) {
 }
 
 // ---------- Barcode Scanner Modal ----------
+function beepAndVibrate() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (Ctx) {
+      const ac = new Ctx();
+      const o = ac.createOscillator(); const g = ac.createGain();
+      o.type = "sine"; o.frequency.value = 880;
+      g.gain.value = 0.15;
+      o.connect(g); g.connect(ac.destination);
+      o.start(); o.stop(ac.currentTime + 0.12);
+      setTimeout(() => ac.close().catch(() => {}), 300);
+    }
+  } catch (_) {}
+  try { if (navigator.vibrate) navigator.vibrate([80, 40, 80]); } catch (_) {}
+}
+
 function ScannerModal({ onClose, onScan, target, setTarget }) {
   const containerId = "gc-scanner";
   const ref = useRef(null);
+  const [torchOn, setTorchOn] = useState(false);
+  const [torchAvailable, setTorchAvailable] = useState(false);
 
   useEffect(() => {
     if (!target) return;
@@ -309,36 +413,65 @@ function ScannerModal({ onClose, onScan, target, setTarget }) {
     const q = new Html5Qrcode(containerId, { formatsToSupport: [
       Html5QrcodeSupportedFormats.QR_CODE,
       Html5QrcodeSupportedFormats.CODE_128, Html5QrcodeSupportedFormats.CODE_39,
+      Html5QrcodeSupportedFormats.CODE_93, Html5QrcodeSupportedFormats.CODABAR,
       Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8,
       Html5QrcodeSupportedFormats.UPC_A, Html5QrcodeSupportedFormats.UPC_E,
-      Html5QrcodeSupportedFormats.DATA_MATRIX,
+      Html5QrcodeSupportedFormats.ITF, Html5QrcodeSupportedFormats.DATA_MATRIX,
+      Html5QrcodeSupportedFormats.PDF_417, Html5QrcodeSupportedFormats.AZTEC,
     ] });
     ref.current = q;
-    q.start({ facingMode: "environment" }, { fps: 10, qrbox: { width: 260, height: 160 } },
+    const qrbox = (vw, vh) => {
+      const min = Math.min(vw, vh);
+      const size = Math.floor(min * 0.85);
+      return { width: size, height: Math.floor(size * 0.55) };
+    };
+    q.start(
+      { facingMode: "environment" },
+      {
+        fps: 15,
+        qrbox,
+        aspectRatio: 1.4,
+        advanced: [{ focusMode: "continuous" }, { zoom: 1 }],
+      },
       async (decoded) => {
         if (stopped) return;
         stopped = true;
-        // Try to grab a snapshot of the current video frame as a File for the note photos
+        beepAndVibrate();
+        // Generate a clean serial image (barcode + QR + text) — no blurry video frame
         let snapshot = null;
         try {
-          const video = document.querySelector(`#${containerId} video`);
-          if (video && video.videoWidth) {
-            const canvas = document.createElement("canvas");
-            canvas.width = video.videoWidth; canvas.height = video.videoHeight;
-            canvas.getContext("2d").drawImage(video, 0, 0);
-            const blob = await new Promise((r) => canvas.toBlob(r, "image/jpeg", 0.85));
-            if (blob) snapshot = new File([blob], `scan_${target}_${Date.now()}.jpg`, { type: "image/jpeg" });
-          }
-        } catch (_) { /* ignore snapshot errors */ }
+          const blob = await generateSerialImage(decoded, target === "cpe" ? "CPE" : "ONT/SFP");
+          if (blob) snapshot = new File([blob], `serial_${target}_${decoded}.png`, { type: "image/png" });
+        } catch (_) { /* ignore */ }
         onScan(decoded, target, snapshot);
         q.stop().then(() => q.clear()).catch(() => {});
       },
-      () => {}).catch((err) => toast.error("Impossibile avviare la fotocamera: " + err));
+      () => {}
+    ).then(async () => {
+      // Detect torch capability
+      try {
+        const caps = q.getRunningTrackCameraCapabilities && q.getRunningTrackCameraCapabilities();
+        if (caps && typeof caps.torchFeature === "function") {
+          setTorchAvailable(caps.torchFeature().isSupported());
+        }
+      } catch (_) {}
+    }).catch((err) => toast.error("Impossibile avviare la fotocamera: " + err));
     return () => {
       stopped = true;
       try { q.stop().then(() => q.clear()).catch(() => {}); } catch (_) {}
     };
   }, [target, onScan]);
+
+  const toggleTorch = async () => {
+    try {
+      const caps = ref.current?.getRunningTrackCameraCapabilities?.();
+      const torch = caps?.torchFeature?.();
+      if (!torch || !torch.isSupported()) { toast.message("Torcia non supportata da questo dispositivo"); return; }
+      const next = !torchOn;
+      await torch.apply(next);
+      setTorchOn(next);
+    } catch (e) { toast.error("Impossibile attivare la torcia"); }
+  };
 
   return (
     <div className="fixed inset-0 bg-slate-900/70 z-50 flex items-start sm:items-center justify-center p-3" onClick={onClose} data-testid="scanner-modal">
@@ -346,7 +479,12 @@ function ScannerModal({ onClose, onScan, target, setTarget }) {
         <div className="px-5 py-4 border-b border-slate-200 flex items-center gap-3">
           <ScanLine size={18} className="brand-pink" />
           <h3 className="text-base font-display font-bold">Scansiona seriale modem</h3>
-          <button onClick={onClose} className="ml-auto btn-ghost rounded-full p-1.5 hover:bg-slate-100" data-testid="close-scanner"><X size={18} /></button>
+          {target && torchAvailable && (
+            <button onClick={toggleTorch} className={`ml-auto rounded-full p-1.5 ${torchOn ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`} data-testid="scanner-torch" title="Torcia">
+              {torchOn ? <Zap size={16} /> : <ZapOff size={16} />}
+            </button>
+          )}
+          <button onClick={onClose} className={`${target && torchAvailable ? "" : "ml-auto"} btn-ghost rounded-full p-1.5 hover:bg-slate-100`} data-testid="close-scanner"><X size={18} /></button>
         </div>
         <div className="p-4">
           {!target ? (
@@ -365,8 +503,13 @@ function ScannerModal({ onClose, onScan, target, setTarget }) {
             </div>
           ) : (
             <div>
-              <div id={containerId} style={{ width: "100%" }} />
-              <p className="text-xs text-slate-500 mt-3">Inquadra il codice a barre o QR — verrà inserito nel campo <strong>{target === "cpe" ? "CPE" : "ONT / SFP"}</strong></p>
+              <div id={containerId} style={{ width: "100%" }} className="rounded-lg overflow-hidden bg-slate-900" />
+              <p className="text-xs text-slate-500 mt-3">
+                Inquadra il codice a barre o QR — verrà inserito nel campo <strong>{target === "cpe" ? "CPE" : "ONT / SFP"}</strong> e verrà generata automaticamente un'immagine pulita del seriale (barcode + QR + testo) da allegare alla nota.
+              </p>
+              {torchAvailable && (
+                <p className="text-[11px] text-slate-400 mt-1">Suggerimento: tocca l'icona <Zap size={10} className="inline" /> per attivare la torcia in ambienti bui.</p>
+              )}
             </div>
           )}
         </div>
@@ -625,8 +768,7 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect, onOp
     catch (e) { toast.error(errorText(e)); }
   };
 
-  const toggleStatus = async () => {
-    const newStatus = note.status === "sospeso" ? "espletato" : "sospeso";
+  const setStatus = async (newStatus) => {
     let reason = note.suspend_reason || "";
     if (newStatus === "sospeso") {
       reason = window.prompt("Motivo della sospensione:", reason || "");
@@ -669,9 +811,18 @@ function NoteCard({ note, onChanged, defaultOpen, selected, onToggleSelect, onOp
       {open && (
         <div className="px-4 sm:px-5 pb-5 border-t border-slate-100">
           <div className="mt-4 flex flex-wrap items-center gap-2">
-            <button onClick={toggleStatus} className={`rounded-full px-3 py-2 text-xs font-semibold inline-flex items-center gap-2 ${isSuspended ? "bg-amber-100 text-amber-800 hover:bg-amber-200" : "bg-emerald-100 text-emerald-800 hover:bg-emerald-200"}`} data-testid={`status-toggle-${note.wr}`}>
-              {isSuspended ? <><PauseCircle size={14} /> Sospesa — {note.suspend_reason ? `"${note.suspend_reason.substring(0, 20)}${note.suspend_reason.length > 20 ? '…' : ''}"` : "clicca per riattivare"}</> : <><CheckCircle2 size={14} /> Espletata</>}
-            </button>
+            <div className="inline-flex bg-slate-100 rounded-full p-1" data-testid={`status-group-${note.wr}`}>
+              <button onClick={() => setStatus("espletato")}
+                className={`rounded-full px-3 py-1.5 text-xs font-semibold inline-flex items-center gap-1.5 transition ${!isSuspended ? "bg-emerald-500 text-white shadow" : "text-emerald-700 hover:bg-emerald-50"}`}
+                data-testid={`status-espletato-${note.wr}`}>
+                <CheckCircle2 size={14} /> Espletato
+              </button>
+              <button onClick={() => setStatus("sospeso")}
+                className={`rounded-full px-3 py-1.5 text-xs font-semibold inline-flex items-center gap-1.5 transition ${isSuspended ? "bg-amber-500 text-white shadow" : "text-amber-700 hover:bg-amber-50"}`}
+                data-testid={`status-sospeso-${note.wr}`}>
+                <PauseCircle size={14} /> Sospeso{isSuspended && note.suspend_reason ? ` · "${note.suspend_reason.substring(0, 18)}${note.suspend_reason.length > 18 ? '…' : ''}"` : ""}
+              </button>
+            </div>
             <button onClick={copy} className="rounded-full px-3 py-2 text-xs font-semibold bg-slate-900 text-white inline-flex items-center gap-2 hover:bg-slate-800" data-testid={`copy-note-button-${note.wr}`}>
               <Copy size={14} /> Copia nota
             </button>
@@ -907,6 +1058,165 @@ function StatsPanel({ notes, onReset }) {
   );
 }
 
+// ---------- Notifications Bell (polling every 15s) ----------
+function NotificationsBell() {
+  const [items, setItems] = useState([]);
+  const [unread, setUnread] = useState(0);
+  const [open, setOpen] = useState(false);
+  const prevUnread = useRef(0);
+
+  const fetchN = useCallback(async () => {
+    try {
+      const r = await axios.get(`${API}/notifications`, { params: { limit: 30 } });
+      setItems(r.data.items || []);
+      const u = r.data.unread || 0;
+      if (u > prevUnread.current) {
+        try { if (navigator.vibrate) navigator.vibrate(50); } catch (_) {}
+        const newest = (r.data.items || []).find((x) => !x.read);
+        if (newest) toast.message("🔔 " + newest.message);
+      }
+      prevUnread.current = u;
+      setUnread(u);
+    } catch (_) { /* silent */ }
+  }, []);
+
+  useEffect(() => {
+    fetchN();
+    const t = setInterval(fetchN, 15000);
+    return () => clearInterval(t);
+  }, [fetchN]);
+
+  const markRead = async (id) => {
+    try { await axios.post(`${API}/notifications/${id}/read`); fetchN(); } catch (_) {}
+  };
+  const markAll = async () => {
+    try { await axios.post(`${API}/notifications/read-all`); fetchN(); } catch (_) {}
+  };
+
+  return (
+    <div className="relative" data-testid="notifications-bell-container">
+      <button onClick={() => setOpen(!open)}
+        className="btn-ghost relative text-xs font-semibold text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-full p-2"
+        data-testid="notifications-bell">
+        <Bell size={16} />
+        {unread > 0 && (
+          <span className="absolute -top-1 -right-1 bg-brand-pink text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center brand-pink-bg" data-testid="notifications-badge">
+            {unread > 99 ? "99+" : unread}
+          </span>
+        )}
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-white rounded-2xl border border-slate-200 shadow-xl z-50 max-h-[70vh] overflow-y-auto" data-testid="notifications-panel">
+            <div className="sticky top-0 bg-white border-b border-slate-200 px-4 py-3 flex items-center gap-2">
+              <Bell size={14} className="brand-pink" />
+              <h3 className="text-sm font-semibold">Notifiche</h3>
+              {unread > 0 && <button onClick={markAll} className="ml-auto text-[11px] font-semibold text-slate-600 hover:text-slate-900" data-testid="mark-all-read">Segna tutto letto</button>}
+            </div>
+            {items.length === 0 ? (
+              <div className="p-6 text-center text-sm text-slate-400">Nessuna notifica</div>
+            ) : (
+              <div>
+                {items.map((n) => (
+                  <div key={n.id} onClick={() => !n.read && markRead(n.id)}
+                    className={`px-4 py-3 border-b border-slate-100 last:border-0 cursor-pointer hover:bg-slate-50 ${!n.read ? "bg-pink-50/40" : ""}`}
+                    data-testid={`notif-${n.id}`}>
+                    <div className="flex items-start gap-2">
+                      {!n.read && <span className="w-2 h-2 rounded-full bg-brand-pink brand-pink-bg mt-1.5 shrink-0" />}
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm text-slate-900">{n.message}</div>
+                        {n.serials?.length > 0 && (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {n.serials.map((s) => <span key={s} className="text-[10px] font-mono bg-slate-100 text-slate-800 px-1.5 py-0.5 rounded">{s}</span>)}
+                          </div>
+                        )}
+                        <div className="text-[10px] text-slate-400 mt-1">{new Date(n.created_at).toLocaleString("it-IT")}</div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------- Serial History Modal ----------
+function SerialHistoryModal({ serialItem, onClose }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    (async () => {
+      try { const r = await axios.get(`${API}/inventory/serials/${serialItem.id}/history`); setData(r.data); }
+      catch (e) { toast.error(errorText(e)); }
+      finally { setLoading(false); }
+    })();
+  }, [serialItem.id]);
+
+  const labelForEvent = (e) => {
+    switch (e.event_type) {
+      case "created": return { icon: <Package size={14} />, color: "bg-emerald-100 text-emerald-800", title: e.extra?.auto_from_sync ? "Ingresso automatico (da sync nota)" : "Ingresso in magazzino" };
+      case "assigned": return { icon: <UserCheck size={14} />, color: "bg-amber-100 text-amber-800", title: `Assegnato a ${e.extra?.to_user_name || "utente"}` };
+      case "unassigned": return { icon: <UserX size={14} />, color: "bg-slate-100 text-slate-700", title: "Rimossa assegnazione" };
+      case "downloaded": return { icon: <RefreshCw size={14} />, color: "bg-pink-100 text-pink-800", title: `Scaricato${e.note_wr ? ` su WR ${e.note_wr}` : ""}` };
+      case "manual_update": return { icon: <Save size={14} />, color: "bg-slate-100 text-slate-700", title: "Aggiornamento manuale" };
+      case "deleted": return { icon: <Trash2 size={14} />, color: "bg-red-100 text-red-800", title: "Eliminato dal magazzino" };
+      default: return { icon: <History size={14} />, color: "bg-slate-100 text-slate-700", title: e.event_type };
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-start sm:items-center justify-center p-3 overflow-y-auto" onClick={onClose} data-testid="serial-history-modal">
+      <div className="bg-white rounded-2xl max-w-lg w-full my-4 max-h-[92vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="sticky top-0 bg-white border-b border-slate-200 px-5 py-4 flex items-center gap-3 z-10">
+          <History size={18} className="brand-pink" />
+          <div className="min-w-0">
+            <h2 className="text-base font-display font-bold">Storico seriale</h2>
+            <div className="text-xs text-slate-500 font-mono truncate">{serialItem.serial}</div>
+          </div>
+          <button onClick={onClose} className="ml-auto btn-ghost rounded-full p-1.5 hover:bg-slate-100" data-testid="close-history"><X size={18} /></button>
+        </div>
+        <div className="p-5">
+          {loading ? (
+            <div className="flex items-center gap-2 text-slate-500 text-sm"><Loader2 className="animate-spin" size={16} /> Caricamento…</div>
+          ) : !data?.events?.length ? (
+            <div className="text-sm text-slate-400 text-center p-6">Nessun evento registrato</div>
+          ) : (
+            <ol className="relative border-l-2 border-slate-200 ml-2 space-y-4" data-testid="serial-timeline">
+              {data.events.map((ev, i) => {
+                const { icon, color, title } = labelForEvent(ev);
+                return (
+                  <li key={ev.id} className="ml-4">
+                    <div className={`absolute -left-[9px] w-4 h-4 rounded-full ${color} flex items-center justify-center border-2 border-white`}>
+                      <span className="w-2 h-2 rounded-full bg-current opacity-70" />
+                    </div>
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+                      <div className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold ${color}`}>
+                        {icon} {title}
+                      </div>
+                      <div className="text-xs text-slate-500 mt-1.5">
+                        {new Date(ev.created_at).toLocaleString("it-IT")}
+                        {ev.actor_name ? ` · ${ev.actor_name}` : ""}
+                      </div>
+                      {ev.note_wr && (
+                        <div className="text-[11px] text-slate-600 mt-1">Nota <span className="font-mono font-semibold">WR {ev.note_wr}</span></div>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ---------- Warehouse Page ----------
 function WarehousePage({ onOpenAdmin, showAdminBtn }) {
   const [serials, setSerials] = useState([]);
@@ -918,6 +1228,7 @@ function WarehousePage({ onOpenAdmin, showAdminBtn }) {
   const [inputTipo, setInputTipo] = useState("CPE");
   const [bulkText, setBulkText] = useState("");
   const [loading, setLoading] = useState(false);
+  const [historyItem, setHistoryItem] = useState(null);
   const scanRef = useRef(null);
 
   const fetchSerials = useCallback(async () => {
@@ -964,6 +1275,18 @@ function WarehousePage({ onOpenAdmin, showAdminBtn }) {
     if (!window.confirm(`Eliminare seriale ${s}?`)) return;
     try { await axios.delete(`${API}/inventory/serials/${id}`); toast.success("Eliminato"); fetchSerials(); }
     catch (e) { toast.error(errorText(e)); }
+  };
+
+  const exportCSV = async () => {
+    try {
+      const r = await axios.get(`${API}/inventory/export.csv`, { responseType: "blob" });
+      const url = URL.createObjectURL(r.data);
+      const today = new Date().toISOString().slice(0, 10);
+      const a = document.createElement("a"); a.href = url; a.download = `magazzino_${today}.csv`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast.success("Export CSV avviato");
+    } catch (e) { toast.error(errorText(e)); }
   };
 
   const stats = {
@@ -1029,6 +1352,9 @@ function WarehousePage({ onOpenAdmin, showAdminBtn }) {
             <option value="ONT">ONT</option>
             <option value="ALTRO">Altro</option>
           </select>
+          <button onClick={exportCSV} className="rounded-full px-3 py-2 text-xs font-semibold bg-slate-900 text-white hover:bg-slate-800 inline-flex items-center gap-1.5" data-testid="warehouse-export-csv">
+            <Download size={14} /> Export CSV
+          </button>
         </div>
         {loading ? (
           <div className="flex items-center gap-2 text-slate-500 text-sm p-4"><Loader2 className="animate-spin" size={16} /> Caricamento…</div>
@@ -1050,7 +1376,11 @@ function WarehousePage({ onOpenAdmin, showAdminBtn }) {
               <tbody>
                 {serials.map((s) => (
                   <tr key={s.id} className="border-b border-slate-100 last:border-0" data-testid={`serial-row-${s.serial}`}>
-                    <td className="py-2 pr-2 font-mono text-slate-900">{s.serial}</td>
+                    <td className="py-2 pr-2 font-mono text-slate-900">
+                      <button onClick={() => setHistoryItem(s)} className="inline-flex items-center gap-1.5 hover:brand-pink hover:underline decoration-dotted underline-offset-2" data-testid={`serial-history-${s.serial}`} title="Vedi storico">
+                        <History size={12} className="text-slate-400" /> {s.serial}
+                      </button>
+                    </td>
                     <td className="py-2 pr-2 text-slate-600">{s.tipo}</td>
                     <td className="py-2 pr-2">
                       {s.status === "in_stock" && <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded">IN STOCK</span>}
@@ -1080,6 +1410,7 @@ function WarehousePage({ onOpenAdmin, showAdminBtn }) {
           </div>
         )}
       </section>
+      {historyItem && <SerialHistoryModal serialItem={historyItem} onClose={() => setHistoryItem(null)} />}
     </main>
   );
 }

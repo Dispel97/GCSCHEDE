@@ -2,7 +2,7 @@ fastapi
 uvicorn[standard]
 motor
 pymongo
-pydantic
+pydantic[email]
 python-jose[cryptography]
 passlib[bcrypt]
 python-multipart
